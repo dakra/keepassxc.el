@@ -59,27 +59,32 @@
          "org.keepassxc.KeePassXC.MainWindow"
          "/keepassxc" "org.keepassxc.MainWindow" method args))
 
+;;;###autoload
 (defun keepassxc-lock-all-databases ()
   "Lock all databases."
   (interactive)
   (keepassxc--call-dbus-method "lockAllDatabases"))
 
+;;;###autoload
 (defun keepassxc-close-all-databases ()
   "Close all databases."
   (interactive)
   (keepassxc--call-dbus-method "closeAllDatabases"))
 
+;;;###autoload
 (defun keepassxc-exit ()
   "Exit KeePassXC app."
   (interactive)
   (keepassxc--call-dbus-method "appExit"))
 
+;;;###autoload
 (defun keepassxc-open-database (database)
   "Open DATABASE file in KeePassXC."
   (interactive
    (list (or keepassxc-database-file (read-file-name "Database file: "))))
   (keepassxc--call-dbus-method  "openDatabase" database))
 
+;;;###autoload
 (defun keepassxc-open-database-password (database password)
   "Open DATABASE file with PASSWORD in KeePassXC."
   (interactive
@@ -88,6 +93,7 @@
      (list db pass)))
   (keepassxc--call-dbus-method  "openDatabase" database password))
 
+;;;###autoload
 (defun keepassxc-open-database-password-key (database password keyfile)
   "Open DATABASE file with PASSWORD and KEYFILE in KeePassXC."
   (interactive
