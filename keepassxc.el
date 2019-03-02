@@ -6,7 +6,7 @@
 ;; URL: https://github.com/dakra/keepassxc.el
 ;; Keywords: keepassxc, keepass, convenience, tools
 ;; Version: 0.1
-;; Package-Requires: ((emacs "25.2"))
+;; Package-Requires: ((emacs "25.2") (sodium "0.1"))
 
 ;; This file is NOT part of GNU Emacs.
 
@@ -32,13 +32,15 @@
 ;;; Code:
 
 (require 'dbus)
+(require 'sodium)
+
 
 
 ;;; Customization
 
 (defgroup keepassxc nil
   "KeePassXC integration"
-  :repfix "keepassxc-"
+  :prefix "keepassxc-"
   :group 'tools)
 
 (defcustom keepassxc-database-file nil
@@ -48,6 +50,11 @@
 (defcustom keepassxc-key-file nil
   "Key file that keepass commands use by default."
   :type 'file)
+
+(defcustom keepassxc-client-id "emacs-keepassxc"
+  "Identity of the Emacs client."
+  :type 'string)
+
 
 
 ;;; DBus interface
@@ -106,10 +113,17 @@
 
 
 ;;; Socket interface
-;; FIXME: Need to create libsodium bindings first
 
 (defvar keepassxc--socket-name "kpxc_server"
   "Filename of the KeePassXC unix domain socket.")
+
+(defvar keepassxc--keypair (sodium-box-keypair))
+(defvar keepassxc--server-key nil)
+(defvar keepassxc--id nil)
+(defvar keepassxc--id-key nil)
+(defvar keepassxc--next-nonce nil)
+(defvar keepassxc--last-msg nil)
+
 
 (defun keepassxc--get-process ()
   "Return keepassxc process."
@@ -126,20 +140,136 @@
           tmp-fn
         (error "Can't locate KeePassXC socket")))))
 
+(defun keepassxc--filter (_p msg)
+  "Filter function to check messages MSG from the keepassxc process."
+  ;;(message "Keepassxc filter: %s %s" _p msg)
+  (let* ((m (json-parse-string msg))
+         (nonce (gethash "nonce" m))
+         (cipher (gethash "message" m))
+         (pk keepassxc--server-key)
+         (sk (alist-get 'sk keepassxc--keypair)))
+    (when (and nonce (not (string-equal nonce keepassxc--next-nonce)))
+      (error "Nonce check failed: %s != %s" nonce keepassxc--next-nonce))
+
+    (setq keepassxc--last-msg
+          (if (and nonce cipher)
+              (json-parse-string
+               (sodium-box-open cipher nonce pk sk))
+            m))))
+
 (defun keepassxc--make-process ()
   "Make a network process to KeePassXC."
+  (make-process)
   (make-network-process
    :name "keepassxc"
    :family 'local
    :remote (keepassxc--get-socket-file)
+   :filter #'keepassxc--filter
+   :noquery t
    :buffer "*keepassxc*"))
 
-(defun keepassxc--send-msg (msg)
-  "Send MSG to KeePassXC."
-  (process-send-string
-   (keepassxc--get-process)
-   (json-serialize msg)))
+(defun keepassxc--get-nonce ()
+  "Return a new nonce and set `keepassxc--next-nonce' to the increment of it."
+  (let ((nonce (sodium-box-make-nonce)))
+    (setq keepassxc--next-nonce (sodium-increment nonce))
+    nonce))
 
+(defun keepassxc--send-json (msg &optional timeout)
+  "JSON serialize MSG and send to KeePassXC.
+Wait for reply TIMEOUT seconds."
+  (let ((p (keepassxc--get-process)))
+    (process-send-string p (json-serialize msg))
+    (unless (accept-process-output p (or timeout 3) nil t)
+      (error "Timeout - No response from KeePassXC"))))
+
+(defun keepassxc--send-action (action &optional msg timeout)
+  "Send ACTION with MSG to keepassxc and wait for reply TIMEOUT seconds."
+  ;; If we don't have a server key yet, fetch one
+  (unless keepassxc--server-key
+    (keepassxc--get-server-key)
+    (message "Generated server key: %s" keepassxc--server-key))
+
+  (let* ((pk       keepassxc--server-key)
+         (sk       (alist-get 'sk keepassxc--keypair))
+         (json-msg (json-serialize (plist-put msg :action action)))
+         (nonce    (keepassxc--get-nonce))
+         (enc-msg  (sodium-box json-msg nonce pk sk)))
+    (keepassxc--send-json `(:triggerUnlock t
+                            :action ,action
+                            :message ,enc-msg
+                            :nonce ,nonce
+                            :clientID ,keepassxc-client-id)
+                          timeout)))
+
+(defun keepassxc--get-server-key ()
+  "Retrieve public key from KeePassXC used for this session."
+  (keepassxc--send-json `(:triggerUnlock t
+                          :action "change-public-keys"
+                          :publicKey ,(cdr (assoc 'pk keepassxc--keypair))
+                          :nonce ,(keepassxc--get-nonce)
+                          :clientID ,keepassxc-client-id))
+  (setq keepassxc--server-key (gethash "publicKey" keepassxc--last-msg)))
+
+(defun keepassxc-associate ()
+  "Connect to keepassxc socket and return database hash."
+  ;; Create a new id key
+  (setq keepassxc--id-key (alist-get 'pk (sodium-box-keypair)))
+  (keepassxc--send-action
+   "associate"
+   `(:key ,(alist-get 'pk keepassxc--keypair)
+     :idKey ,keepassxc--id-key) 30)  ; Give the user 30 seconds to enter ID
+  (setq keepassxc--id (gethash "id" keepassxc--last-msg)))
+
+(defun keepassxc-test-associate ()
+  "Test if this session is associated with KeePassXC.
+Return the associated id or NIL."
+  (keepassxc--send-action
+   "test-associate"
+   `(:id ,keepassxc--id :key ,keepassxc--id-key))
+  (gethash "id" keepassxc--last-msg))
+
+(defun keepassxc-get-database-hash ()
+  "Return database hash."
+  (keepassxc--send-action "get-databasehash")
+  (gethash "hash" keepassxc--last-msg))
+
+;;;###autoload
+(defun keepassxc-get-logins (url)
+  "Return logins for URL."
+  (keepassxc--send-action
+   "get-logins"
+   `(:id ,keepassxc--id
+     :url ,url
+     :submitUrl ,url
+     :keys [(:id ,keepassxc--id :key ,keepassxc--id-key)]))
+  (gethash "entries" keepassxc--last-msg))
+
+;;;###autoload
+(defun keepassxc-set-login (uuid login password url)
+  "Set login for UUID with LOGIN, PASSWORD and URL."
+  (keepassxc--send-action
+   "set-login"
+   `(:id ,keepassxc--id-key
+     :uuid ,uuid
+     :login ,login
+     :password ,password
+     :url ,url)))
+
+;;;###autoload
+(defun keepassxc-generate-password ()
+  "Generate a password using KeePassXC settings."
+  (keepassxc--send-action "generate-password")
+  (gethash "password" (aref (gethash "entries" keepassxc--last-msg) 0)))
+
+;;;###autoload
+(defun keepassxc-lock-database ()
+  "Lock the current database."
+  (keepassxc--send-action "lock-database"))
+
+(defun keepassxc-disconnect ()
+  "Disconnect from KeePassXC socket."
+  (setq keepassxc--server-key nil)
+  (process-send-eof (keepassxc--get-process)))
 
 (provide 'keepassxc)
 ;;; keepassxc.el ends here
