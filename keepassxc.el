@@ -42,7 +42,8 @@
 (defgroup keepassxc nil
   "KeePassXC integration"
   :prefix "keepassxc-"
-  :group 'tools)
+  :group 'tools
+  :link '(url-link "https://github.com/dakra/keepassxc.el"))
 
 (defcustom keepassxc-database-file nil
   "Database file that keepass commands use by default."
@@ -163,7 +164,6 @@
 
 (defun keepassxc--filter (_p msg)
   "Filter function to check messages MSG from the keepassxc process."
-  ;;(message "Keepassxc filter: %s %s" _p msg)
   (let* ((m (json-parse-string msg))
          (nonce (gethash "nonce" m))
          (cipher (gethash "message" m))
@@ -180,14 +180,12 @@
 
 (defun keepassxc--make-process ()
   "Make a network process to KeePassXC."
-  (make-process)
   (make-network-process
    :name "keepassxc"
    :family 'local
    :remote (keepassxc--get-socket-file)
    :filter #'keepassxc--filter
-   :noquery t
-   :buffer "*keepassxc*"))
+   :noquery t))
 
 (defun keepassxc--get-nonce ()
   "Return a new nonce and set `keepassxc--next-nonce' to the increment of it."
@@ -198,8 +196,9 @@
 (defun keepassxc--send-json (msg &optional timeout)
   "JSON serialize MSG and send to KeePassXC.
 Wait for reply TIMEOUT seconds."
-  (let ((p (keepassxc--get-process)))
-    (process-send-string p (json-serialize msg))
+  (let ((p (keepassxc--get-process))
+        (json-msg (json-serialize msg)))
+    (process-send-string p json-msg)
     (unless (accept-process-output p (or timeout 3) nil t)
       (error "Timeout - No response from KeePassXC"))))
 
@@ -212,8 +211,7 @@ Wait for reply TIMEOUT seconds."
     (user-error "No keypair saved yet.  Run `keepassxc-associate'"))
   ;; If we don't have a server key yet, fetch one
   (unless keepassxc--server-key
-    (keepassxc--get-server-key)
-    (message "Generated server key: %s" keepassxc--server-key))
+    (keepassxc--get-server-key))
 
   (let* ((pk       keepassxc--server-key)
          (sk       (alist-get 'sk keepassxc--keypair))
@@ -235,6 +233,9 @@ Wait for reply TIMEOUT seconds."
                           :nonce ,(keepassxc--get-nonce)
                           :clientID ,keepassxc-client-id))
   (setq keepassxc--server-key (gethash "publicKey" keepassxc--last-msg)))
+
+
+;;; Interactive commands
 
 ;;;###autoload
 (defun keepassxc-associate ()
