@@ -120,18 +120,15 @@
 
 (defvar keepassxc--socket-name "kpxc_server"
   "Filename of the KeePassXC unix domain socket.")
-
-(defvar keepassxc--keypair (sodium-box-keypair))
+(defvar keepassxc--keypair nil)
 (defvar keepassxc--server-key nil)
 (defvar keepassxc--id nil)
 (defvar keepassxc--id-key nil)
 (defvar keepassxc--next-nonce nil)
 (defvar keepassxc--last-msg nil)
 
-(if (file-exists-p keepassxc-save-file)
-    (load keepassxc-save-file t))
 
-(defun keepassxc--save ()
+(defun keepassxc--save-keys ()
   "Save keyring to `keepassxc-save-file'."
   (make-directory (file-name-directory (expand-file-name keepassxc-save-file)) 'parents)
   (with-temp-file keepassxc-save-file
@@ -139,6 +136,14 @@
                     (alist-get 'pk keepassxc--keypair) (alist-get 'sk keepassxc--keypair)))
     (insert (format "(setq keepassxc--id \"%s\")\n" keepassxc--id))
     (insert (format "(setq keepassxc--id-key \"%s\")\n" keepassxc--id-key))))
+
+(defun keepassxc--load-keys ()
+  "Load keys from `keepassxc-save-file'."
+  (when (file-exists-p keepassxc-save-file)
+    (load keepassxc-save-file t)
+    (unless (keepassxc-test-associate)
+      (user-error "Keys loaded but not associated"))
+    t))
 
 (defun keepassxc--get-process ()
   "Return keepassxc process."
@@ -201,7 +206,8 @@ Wait for reply TIMEOUT seconds."
   "Send ACTION with MSG to keepassxc and wait for reply TIMEOUT seconds."
   ;; Error if we don't have a keypair or id yet
   (unless (or (string-equal action "associate")
-              (and keepassxc--keypair keepassxc--id))
+              (and keepassxc--keypair keepassxc--id)
+              (keepassxc--load-keys))
     (user-error "No keypair saved yet.  Run `keepassxc-associate'"))
   ;; If we don't have a server key yet, fetch one
   (unless keepassxc--server-key
@@ -245,7 +251,7 @@ Wait for reply TIMEOUT seconds."
      :idKey ,keepassxc--id-key) 30)  ; Give the user 30 seconds to enter ID
   (when (gethash "id" keepassxc--last-msg)
     (setq keepassxc--id (gethash "id" keepassxc--last-msg))
-    (keepassxc--save)))
+    (keepassxc--save-keys)))
 
 (defun keepassxc-test-associate ()
   "Test if this session is associated with KeePassXC.
