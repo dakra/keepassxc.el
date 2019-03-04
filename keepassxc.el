@@ -31,6 +31,7 @@
 
 ;;; Code:
 
+(require 'browse-url)
 (require 'dbus)
 (require 'sodium)
 
@@ -269,6 +270,7 @@ Return the associated id or NIL."
 ;;;###autoload
 (defun keepassxc-get-logins (url)
   "Return logins for URL."
+  (interactive (list (car (browse-url-interactive-arg "URL: "))))
   (keepassxc--send-action
    "get-logins"
    `(:id ,keepassxc--id
@@ -276,6 +278,24 @@ Return the associated id or NIL."
      :submitUrl ,url
      :keys [(:id ,keepassxc--id :key ,keepassxc--id-key)]))
   (gethash "entries" keepassxc--last-msg))
+
+;;;###autoload
+(defun keepassxc-get-login (url)
+  "Return login for URL.
+
+Lets you choose login with multiple matches."
+  (interactive (list (car (browse-url-interactive-arg "URL: "))))
+  (let* ((logins (mapcar (lambda (e)
+                           (cons (gethash "login" e) e))
+                         (keepassxc-get-logins url)))
+         (login (cdr (assoc-string (completing-read "Select login: " logins) logins))))
+    ;; (kill-new (gethash "name" e))
+    ;; (kill-new (gethash "uuid" e))
+    (kill-new url)
+    (kill-new (gethash "login" login))
+    (kill-new (gethash "password" login))
+    (message "URL, login, password for %s - %s copied as last 3 items to the kill-ring."
+             url (gethash "login" login))))
 
 ;;;###autoload
 (defun keepassxc-set-login (uuid login password url)
