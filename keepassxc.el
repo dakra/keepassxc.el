@@ -312,8 +312,10 @@ Lets you choose login with multiple matches."
 ;;;###autoload
 (defun keepassxc-generate-password ()
   "Generate a password using KeePassXC settings."
+  (interactive)
   (keepassxc--send-action "generate-password")
-  (gethash "password" (aref (gethash "entries" keepassxc--last-msg) 0)))
+  (kill-new (gethash "password" (aref (gethash "entries" keepassxc--last-msg) 0)))
+  (message "Password copied to kill-ring."))
 
 ;;;###autoload
 (defun keepassxc-lock-database ()
