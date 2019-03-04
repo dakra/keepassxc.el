@@ -55,6 +55,10 @@
   "Identity of the Emacs client."
   :type 'string)
 
+(defcustom keepassxc-save-file
+  (expand-file-name "var/keepassxc.el" user-emacs-directory)
+  "File in which to save your keyring."
+  :type 'file)
 
 
 ;;; DBus interface
@@ -124,6 +128,17 @@
 (defvar keepassxc--next-nonce nil)
 (defvar keepassxc--last-msg nil)
 
+(if (file-exists-p keepassxc-save-file)
+    (load keepassxc-save-file t))
+
+(defun keepassxc--save ()
+  "Save keyring to `keepassxc-save-file'."
+  (make-directory (file-name-directory (expand-file-name keepassxc-save-file)) 'parents)
+  (with-temp-file keepassxc-save-file
+    (insert (format "(setq keepassxc--keypair '((pk . \"%s\") (sk . \"%s\")))\n"
+                    (alist-get 'pk keepassxc--keypair) (alist-get 'sk keepassxc--keypair)))
+    (insert (format "(setq keepassxc--id \"%s\")\n" keepassxc--id))
+    (insert (format "(setq keepassxc--id-key \"%s\")\n" keepassxc--id-key))))
 
 (defun keepassxc--get-process ()
   "Return keepassxc process."
@@ -184,6 +199,10 @@ Wait for reply TIMEOUT seconds."
 
 (defun keepassxc--send-action (action &optional msg timeout)
   "Send ACTION with MSG to keepassxc and wait for reply TIMEOUT seconds."
+  ;; Error if we don't have a keypair or id yet
+  (unless (or (string-equal action "associate")
+              (and keepassxc--keypair keepassxc--id))
+    (user-error "No keypair saved yet.  Run `keepassxc-associate'"))
   ;; If we don't have a server key yet, fetch one
   (unless keepassxc--server-key
     (keepassxc--get-server-key)
@@ -210,15 +229,23 @@ Wait for reply TIMEOUT seconds."
                           :clientID ,keepassxc-client-id))
   (setq keepassxc--server-key (gethash "publicKey" keepassxc--last-msg)))
 
+;;;###autoload
 (defun keepassxc-associate ()
   "Connect to keepassxc socket and return database hash."
-  ;; Create a new id key
+  (interactive)
+  ;; Create a new keypair and new id key
+  (setq keepassxc--keypair (sodium-box-keypair))
   (setq keepassxc--id-key (alist-get 'pk (sodium-box-keypair)))
+  (setq keepassxc--id nil)
+  (setq keepassxc--server-key nil)
+
   (keepassxc--send-action
    "associate"
    `(:key ,(alist-get 'pk keepassxc--keypair)
      :idKey ,keepassxc--id-key) 30)  ; Give the user 30 seconds to enter ID
-  (setq keepassxc--id (gethash "id" keepassxc--last-msg)))
+  (when (gethash "id" keepassxc--last-msg)
+    (setq keepassxc--id (gethash "id" keepassxc--last-msg))
+    (keepassxc--save)))
 
 (defun keepassxc-test-associate ()
   "Test if this session is associated with KeePassXC.
