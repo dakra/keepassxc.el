@@ -288,7 +288,7 @@ Return the associated id or NIL."
 Lets you choose login with multiple matches."
   (interactive (list (car (browse-url-interactive-arg "URL: "))))
   (let* ((logins (mapcar (lambda (e)
-                           (cons (gethash "login" e) e))
+                           (cons (format "%s - %s" (gethash "name" e) (gethash "login" e)) e))
                          (keepassxc-get-logins url)))
          (login (cdr (assoc-string (completing-read "Select login: " logins) logins))))
     ;; (kill-new (gethash "name" e))
