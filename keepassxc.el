@@ -196,6 +196,7 @@
 (defun keepassxc--send-json (msg &optional timeout)
   "JSON serialize MSG and send to KeePassXC.
 Wait for reply TIMEOUT seconds."
+  (setq keepassxc--last-msg nil)
   (let ((p (keepassxc--get-process))
         (json-msg (json-serialize msg)))
     (process-send-string p json-msg)
