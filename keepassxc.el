@@ -128,6 +128,7 @@
 (defvar keepassxc--id-key nil)
 (defvar keepassxc--next-nonce nil)
 (defvar keepassxc--last-msg nil)
+(defvar keepassxc--last-filter-input nil)
 
 
 (defun keepassxc--save-keys ()
@@ -164,19 +165,26 @@
 
 (defun keepassxc--filter (_p msg)
   "Filter function to check messages MSG from the keepassxc process."
-  (let* ((m (json-parse-string msg))
-         (nonce (gethash "nonce" m))
-         (cipher (gethash "message" m))
-         (pk keepassxc--server-key)
-         (sk (alist-get 'sk keepassxc--keypair)))
-    (when (and nonce (not (string-equal nonce keepassxc--next-nonce)))
-      (error "Nonce check failed: %s != %s" nonce keepassxc--next-nonce))
+  ;; Check if there was an incomplete JSON string at last filter function invocation.
+  (when keepassxc--last-filter-input
+    (setq msg (concat keepassxc--last-filter-input msg))
+    (setq keepassxc--last-filter-input nil))
+  (condition-case nil
+      (let* ((m (json-parse-string msg))
+             (nonce (gethash "nonce" m))
+             (cipher (gethash "message" m))
+             (pk keepassxc--server-key)
+             (sk (alist-get 'sk keepassxc--keypair)))
+        (when (and nonce (not (string-equal nonce keepassxc--next-nonce)))
+          (error "Nonce check failed: %s != %s" nonce keepassxc--next-nonce))
 
-    (setq keepassxc--last-msg
-          (if (and nonce cipher)
-              (json-parse-string
-               (sodium-box-open cipher nonce pk sk))
-            m))))
+        (setq keepassxc--last-msg
+              (if (and nonce cipher)
+                  (json-parse-string
+                   (sodium-box-open cipher nonce pk sk))
+                m)))
+    ;; Filter function received msg before the JSON string got completely send
+    (json-end-of-file (setq keepassxc--last-filter-input msg))))
 
 (defun keepassxc--make-process ()
   "Make a network process to KeePassXC."
