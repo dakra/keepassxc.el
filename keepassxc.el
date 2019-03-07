@@ -122,6 +122,7 @@
 
 (defvar keepassxc--socket-name "kpxc_server"
   "Filename of the KeePassXC unix domain socket.")
+(defvar keepassxc--process-name " *keepassxc-socket-process*")
 (defvar keepassxc--keypair nil)
 (defvar keepassxc--server-key nil)
 (defvar keepassxc--id nil)
@@ -150,7 +151,7 @@
 
 (defun keepassxc--get-process ()
   "Return keepassxc process."
-  (or (get-process "keepassxc")
+  (or (get-process keepassxc--process-name)
       (keepassxc--make-process)))
 
 (defun keepassxc--get-socket-file ()
@@ -189,7 +190,7 @@
 (defun keepassxc--make-process ()
   "Make a network process to KeePassXC."
   (make-network-process
-   :name "keepassxc"
+   :name keepassxc--process-name
    :family 'local
    :remote (keepassxc--get-socket-file)
    :filter #'keepassxc--filter
@@ -208,7 +209,7 @@ Wait for reply TIMEOUT seconds."
   (let ((p (keepassxc--get-process))
         (json-msg (json-serialize msg)))
     (process-send-string p json-msg)
-    (unless (accept-process-output p (or timeout 3) nil t)
+    (unless (accept-process-output p (or timeout 2) nil t)
       (error "Timeout - No response from KeePassXC"))))
 
 (defun keepassxc--send-action (action &optional msg timeout)
