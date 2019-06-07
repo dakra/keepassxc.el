@@ -62,6 +62,10 @@
   "File in which to save your keyring."
   :type 'file)
 
+(defcustom keepassxc-default-url-schema "https://"
+  "Default schema to use when searching (e.g. with `get-login') for a URL and no schema is provided."
+  :type 'string)
+
 
 ;;; DBus interface
 
@@ -131,6 +135,13 @@
 (defvar keepassxc--last-msg nil)
 (defvar keepassxc--last-filter-input nil)
 
+
+(defun keepassxc--read-url ()
+  "Read URL from the user return it with default schema prefixed if non given."
+  (let ((url (car (browse-url-interactive-arg "URL: "))))
+    (if (string-match-p "://" url)
+        url
+      (concat keepassxc-default-url-schema url))))
 
 (defun keepassxc--save-keys ()
   "Save keyring to `keepassxc-save-file'."
@@ -285,7 +296,7 @@ Return the associated id or NIL."
 ;;;###autoload
 (defun keepassxc-get-logins (url)
   "Return logins for URL."
-  (interactive (list (car (browse-url-interactive-arg "URL: "))))
+  (interactive (list (keepassxc--read-url)))
   (keepassxc--send-action
    "get-logins"
    `(:id ,keepassxc--id
@@ -299,7 +310,7 @@ Return the associated id or NIL."
   "Return login for URL.
 
 Lets you choose login with multiple matches."
-  (interactive (list (car (browse-url-interactive-arg "URL: "))))
+  (interactive (list (keepassxc--read-url)))
   (let* ((logins (mapcar (lambda (e)
                            (cons (format "%s - %s" (gethash "name" e) (gethash "login" e)) e))
                          (keepassxc-get-logins url)))
