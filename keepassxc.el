@@ -170,7 +170,7 @@
   (when keepassxc--last-filter-input
     (setq msg (concat keepassxc--last-filter-input msg))
     (setq keepassxc--last-filter-input nil))
-  (condition-case nil
+  (condition-case err
       (let* ((m (json-parse-string msg))
              (nonce (gethash "nonce" m))
              (cipher (gethash "message" m))
@@ -184,6 +184,10 @@
                   (json-parse-string
                    (sodium-box-open cipher nonce pk sk))
                 m)))
+    ;; FIXME: Sometimes the keepass process sends rubbish after the json object
+    ;;        Mostly only one character like . Find out why this is and maybe fix upstream?!
+    ;; (json-trailing-content (keepassxc--filter nil (replace-regexp-in-string "[^}]+\\'" "" msg)))
+    (json-trailing-content (error "%s - in json: %s" (error-message-string err) msg))
     ;; Filter function received msg before the JSON string got completely send
     (json-end-of-file (setq keepassxc--last-filter-input msg))))
 
