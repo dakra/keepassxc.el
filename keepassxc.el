@@ -1,12 +1,12 @@
 ;;; keepassxc.el --- Utility functions for working with keepassxc -*- lexical-binding: t -*-
 
-;; Copyright (c) 2019 Daniel Kraus <daniel@kraus.my>
+;; Copyright (c) 2019-2021 Daniel Kraus <daniel@kraus.my>
 
 ;; Author: Daniel Kraus <daniel@kraus.my>
 ;; URL: https://github.com/dakra/keepassxc.el
 ;; Keywords: keepassxc, keepass, convenience, tools
 ;; Version: 0.1
-;; Package-Requires: ((emacs "25.2") (sodium "0.1"))
+;; Package-Requires: ((emacs "27.1") (sodium "0.1"))
 
 ;; This file is NOT part of GNU Emacs.
 
