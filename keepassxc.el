@@ -45,6 +45,10 @@
   :group 'tools
   :link '(url-link "https://github.com/dakra/keepassxc.el"))
 
+(defcustom keepassxc-command "keepassxc"
+  "Filename of the keepassxc executable."
+  :type 'file)
+
 (defcustom keepassxc-database-file nil
   "Database file that keepass commands use by default."
   :type 'file)
@@ -75,6 +79,12 @@
   (apply #'dbus-call-method :session
          "org.keepassxc.KeePassXC.MainWindow"
          "/keepassxc" "org.keepassxc.MainWindow" method args))
+
+;;;###autoload
+(defun keepassxc-open ()
+  "Start keepassxc."
+  (interactive)
+  (start-process-shell-command "keepassxc" nil keepassxc-command))
 
 ;;;###autoload
 (defun keepassxc-lock-all-databases ()
