@@ -134,7 +134,7 @@
 
 ;;; Socket interface
 
-(defvar keepassxc--socket-name "kpxc_server"
+(defvar keepassxc--socket-name "org.keepassxc.KeePassXC.BrowserServer"
   "Filename of the KeePassXC unix domain socket.")
 (defvar keepassxc--process-name " *keepassxc-socket-process*")
 (defvar keepassxc--keypair nil)
