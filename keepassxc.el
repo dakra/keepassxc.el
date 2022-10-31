@@ -1,6 +1,6 @@
 ;;; keepassxc.el --- Utility functions for working with keepassxc -*- lexical-binding: t -*-
 
-;; Copyright (c) 2019-2021 Daniel Kraus <daniel@kraus.my>
+;; Copyright (c) 2019-2022 Daniel Kraus <daniel@kraus.my>
 
 ;; Author: Daniel Kraus <daniel@kraus.my>
 ;; URL: https://github.com/dakra/keepassxc.el
@@ -67,7 +67,8 @@
   :type 'file)
 
 (defcustom keepassxc-default-url-schema "https://"
-  "Default schema to use when searching (e.g. with `get-login') for a URL and no schema is provided."
+  "Default schema to use when searching (e.g. with `get-login') for
+a URL and no schema is provided."
   :type 'string)
 
 
@@ -130,6 +131,16 @@
                   (read-file-name (format "Key file for %s: " (file-name-nondirectory db))))))
      (list db pass kf)))
   (keepassxc--call-dbus-method  "openDatabase" database password keyfile))
+
+(defun keepassxc-hardware-key-supported-p ()
+  "Check if hardware keys are supported."
+  (interactive)
+  (keepassxc--call-dbus-method "isHardwareKeySupported"))
+
+(defun keepassxc-refresh-hardware-keys ()
+  "Refresh hardware key list."
+  (interactive)
+  (keepassxc--call-dbus-method "refreshHardwareKeys"))
 
 
 ;;; Socket interface
