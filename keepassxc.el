@@ -78,7 +78,7 @@
   "Call keepass METHOD on dbus with optional ARGS."
   (apply #'dbus-call-method :session
          "org.keepassxc.KeePassXC.MainWindow"
-         "/keepassxc" "org.keepassxc.MainWindow" method args))
+         "/keepassxc" "org.keepassxc.KeePassXC.MainWindow" method args))
 
 ;;;###autoload
 (defun keepassxc-open ()
