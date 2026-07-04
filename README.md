@@ -89,8 +89,14 @@ Or from local checkouts (run `make` in the sodium.el checkout once):
 1. Enable Browser Integration in KeePassXC (see above).
 2. `M-x keepassxc-associate` — KeePassXC pops up a dialog; confirm and
    give the association a name (e.g. "emacs").
-3. Optionally set `plstore-encrypt-to` to your GPG key id, otherwise
-   plstore asks on first save.
+3. Set `plstore-encrypt-to` to your GPG key id (or email) so the
+   association is stored GPG-encrypted:
+
+   ```elisp
+   (setq plstore-encrypt-to "you@example.com")
+   ```
+
+   Without it, plstore uses symmetric encryption and asks for a passphrase.
 
 That's it.  The association is per database and stored in
 `keepassxc-association-file`; new databases just trigger a new
