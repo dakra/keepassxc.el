@@ -181,12 +181,15 @@ the parsed message as a hash-table.")
               'keepassxc-error)
 (define-error 'keepassxc-no-logins "No logins found in KeePassXC"
               'keepassxc-error)
+(define-error 'keepassxc-incorrect-action "Action not supported by KeePassXC"
+              'keepassxc-error)
 
 (defconst keepassxc--error-conditions
   '((1 . keepassxc-database-locked)     ; ERROR_KEEPASS_DATABASE_NOT_OPENED
     (6 . keepassxc-denied)              ; ERROR_KEEPASS_ACTION_CANCELLED_OR_DENIED
     (8 . keepassxc-not-associated)      ; ERROR_KEEPASS_ASSOCIATION_FAILED
     (10 . keepassxc-not-associated)     ; ERROR_KEEPASS_ENCRYPTION_KEY_UNRECOGNIZED
+    (12 . keepassxc-incorrect-action)   ; ERROR_KEEPASS_INCORRECT_ACTION
     (15 . keepassxc-no-logins)          ; ERROR_KEEPASS_NO_LOGINS_FOUND
     (19 . keepassxc-denied))            ; ERROR_KEEPASS_ACCESS_TO_ALL_ENTRIES_DENIED
   "Alist mapping KeePassXC errorCode values to error symbols.")
@@ -743,10 +746,14 @@ Use \"/\" in NAME to create nested groups, e.g. \"emacs/mail\"."
 (defun keepassxc-delete-entry (uuid)
   "Move the KeePassXC entry UUID to the recycle bin."
   (interactive
-   (let ((entry (keepassxc--read-entry
-                 (keepassxc--read-url "Delete entry for URL: "))))
+   (let ((entry (condition-case nil
+                    (keepassxc--read-database-entry "Delete entry: ")
+                  (keepassxc-incorrect-action
+                   (keepassxc--read-entry
+                    (keepassxc--read-url "Delete entry for URL: "))))))
      (unless (yes-or-no-p (format "Delete KeePassXC entry %S? "
-                                  (gethash "name" entry)))
+                                  (or (gethash "title" entry)
+                                      (gethash "name" entry))))
        (user-error "Aborted"))
      (list (gethash "uuid" entry))))
   (let ((session (keepassxc--default-session)))
@@ -927,6 +934,43 @@ entries\" to be enabled in the KeePassXC browser settings."
                         nil t)))
           (cdr (assoc choice candidates)))))))
 
+(defun keepassxc--resolve-database-entry (entry)
+  "Return the full login entry for the database ENTRY.
+ENTRY is a hash-table with \"title\", \"uuid\" and \"url\" as
+returned by `keepassxc-get-database-entries'.  The login (with
+username and password) is fetched with `keepassxc-get-logins' on
+the entry's URL; the KeePassXC browser protocol offers no
+password lookup by UUID, so entries without a URL signal a
+`user-error'."
+  (let ((url (gethash "url" entry))
+        (uuid (gethash "uuid" entry))
+        (title (gethash "title" entry)))
+    (when (or (null url) (string-empty-p url))
+      (user-error
+       "Entry %S has no URL; KeePassXC only provides passwords by URL"
+       title))
+    (let ((logins (condition-case nil
+                      (keepassxc-get-logins url)
+                    (keepassxc-no-logins nil))))
+      (or (seq-find (lambda (login) (equal (gethash "uuid" login) uuid))
+                    logins)
+          (and (null (cdr logins)) (car logins))
+          (user-error "KeePassXC returned no login for entry %S (%s)"
+                      title url)))))
+
+(defun keepassxc--select-login (&optional prompt)
+  "Select a KeePassXC entry and return the full login hash-table.
+The entry is selected from all database entries; completion
+matches the entry title and URL.  When KeePassXC doesn't support
+listing all entries (before 2.8), fall back to prompting for a
+URL and selecting among its logins.  PROMPT overrides the default
+minibuffer prompt."
+  (condition-case nil
+      (keepassxc--resolve-database-entry
+       (keepassxc--read-database-entry prompt))
+    (keepassxc-incorrect-action
+     (keepassxc--read-entry (keepassxc--read-url) prompt))))
+
 (defvar keepassxc--clear-timer nil
   "Timer clearing the last copied secret from the `kill-ring'.")
 
@@ -970,13 +1014,15 @@ immediately."
              what keepassxc-password-timeout)))
 
 ;;;###autoload
-(defun keepassxc-get-login (url)
-  "Return a KeePassXC entry for URL, selecting one when several match.
-Interactively, copy the username and then the password to the
-`kill-ring', so the password is the most recent kill; the password
-is cleared after `keepassxc-password-timeout' seconds."
-  (interactive (list (keepassxc--read-url)))
-  (let ((entry (keepassxc--read-entry url)))
+(defun keepassxc-get-login ()
+  "Select a KeePassXC entry and return it as a hash-table.
+The entry is selected from all database entries; completion
+matches the entry title and URL.  Interactively, copy the
+username and then the password to the `kill-ring', so the
+password is the most recent kill; the password is cleared after
+`keepassxc-password-timeout' seconds."
+  (interactive)
+  (let ((entry (keepassxc--select-login)))
     (when (called-interactively-p 'interactive)
       (let ((login (gethash "login" entry)))
         (when (and login (not (string-empty-p login)))
@@ -987,19 +1033,23 @@ is cleared after `keepassxc-password-timeout' seconds."
     entry))
 
 ;;;###autoload
-(defun keepassxc-copy-password (url)
-  "Copy the password of a KeePassXC entry for URL to the `kill-ring'.
-The password is cleared after `keepassxc-password-timeout' seconds."
-  (interactive (list (keepassxc--read-url)))
-  (let ((entry (keepassxc--read-entry url)))
+(defun keepassxc-copy-password ()
+  "Copy the password of a KeePassXC entry to the `kill-ring'.
+The entry is selected from all database entries; completion
+matches the entry title and URL.  The password is cleared after
+`keepassxc-password-timeout' seconds."
+  (interactive)
+  (let ((entry (keepassxc--select-login "Copy password of entry: ")))
     (keepassxc--kill-secret (gethash "password" entry)
                             (format "Password for %S" (gethash "name" entry)))))
 
 ;;;###autoload
-(defun keepassxc-copy-username (url)
-  "Copy the username of a KeePassXC entry for URL to the `kill-ring'."
-  (interactive (list (keepassxc--read-url)))
-  (let* ((entry (keepassxc--read-entry url))
+(defun keepassxc-copy-username ()
+  "Copy the username of a KeePassXC entry to the `kill-ring'.
+The entry is selected from all database entries; completion
+matches the entry title and URL."
+  (interactive)
+  (let* ((entry (keepassxc--select-login "Copy username of entry: "))
          (login (gethash "login" entry)))
     (if (and login (not (string-empty-p login)))
         (progn
@@ -1009,17 +1059,22 @@ The password is cleared after `keepassxc-password-timeout' seconds."
       (user-error "Entry %S has no username" (gethash "name" entry)))))
 
 ;;;###autoload
-(defun keepassxc-copy-totp (url)
-  "Copy the current TOTP of a KeePassXC entry for URL to the `kill-ring'.
-The TOTP is cleared after `keepassxc-password-timeout' seconds."
-  (interactive (list (keepassxc--read-url)))
-  (let* ((entry (keepassxc--read-entry url))
-         (inline-totp (gethash "totp" entry))
-         (totp (if (and inline-totp (not (string-empty-p inline-totp)))
-                   inline-totp
-                 (keepassxc-get-totp (gethash "uuid" entry)))))
+(defun keepassxc-copy-totp ()
+  "Copy the current TOTP of a KeePassXC entry to the `kill-ring'.
+The entry is selected from all database entries; completion
+matches the entry title and URL.  The TOTP is cleared after
+`keepassxc-password-timeout' seconds."
+  (interactive)
+  (let* ((entry (condition-case nil
+                    (keepassxc--read-database-entry "Copy TOTP of entry: ")
+                  (keepassxc-incorrect-action
+                   (keepassxc--read-entry (keepassxc--read-url)
+                                          "Copy TOTP of entry: "))))
+         (totp (keepassxc-get-totp (gethash "uuid" entry))))
     (keepassxc--kill-secret totp
-                            (format "TOTP for %S" (gethash "name" entry)))))
+                            (format "TOTP for %S"
+                                    (or (gethash "title" entry)
+                                        (gethash "name" entry))))))
 
 (defun keepassxc--entry-url (entry)
   "Return the URL of the database ENTRY, or signal a `user-error'."

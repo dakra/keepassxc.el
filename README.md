@@ -15,12 +15,12 @@ All traffic is encrypted with libsodium `crypto_box`
 ## Features
 
 - **Entry access**: `keepassxc-copy-password`, `keepassxc-copy-username`,
-  `keepassxc-copy-totp`, `keepassxc-get-login` with rich completion
-  (annotations work with vertico/marginalia out of the box).
+  `keepassxc-copy-totp`, `keepassxc-get-login`, `keepassxc-copy-url`
+  and `keepassxc-browse-url` all pick an entry from the whole
+  database — completion matches title *and* URL, narrowing live as
+  you type (vertico/orderless style).
   Copied secrets are cleared from the kill-ring after
   `keepassxc-password-timeout` (45s default), like password-store.
-  `keepassxc-copy-url` and `keepassxc-browse-url` pick an entry from
-  the whole database — completion matches title *and* URL.
 - **auth-source backend**: `(keepassxc-auth-source-enable)` and your
   KeePassXC database answers `auth-source-search`, including entry
   creation via `:create t`.
@@ -45,7 +45,10 @@ All traffic is encrypted with libsodium `crypto_box`
 - Emacs 28.1+ built with dynamic module support and native JSON
 - KeePassXC ≥ 2.6 with **Browser Integration enabled**
   (Settings → Browser Integration → Enable browser integration; no
-  browser needs to be configured, only the setting enabled)
+  browser needs to be configured, only the setting enabled).
+  The incremental all-entries picker needs KeePassXC ≥ 2.8
+  ([snapshot builds](https://snapshot.keepassxc.org/)); older versions
+  fall back to a URL prompt.
 - [sodium.el](https://github.com/dakra/sodium.el) and libsodium
 
 ## Installation
@@ -107,12 +110,12 @@ association dialog on first use.
 | Command                           | Description                                      |
 |-----------------------------------|--------------------------------------------------|
 | `keepassxc`                       | Transient menu with all commands                 |
-| `keepassxc-copy-password`         | Copy password (auto-cleared from kill-ring)      |
-| `keepassxc-copy-username`         | Copy username                                    |
-| `keepassxc-copy-totp`             | Copy current TOTP (auto-cleared)                 |
-| `keepassxc-copy-url`              | Copy an entry's URL (searches title + URL)       |
-| `keepassxc-browse-url`            | Open an entry's URL with `browse-url`            |
-| `keepassxc-get-login`             | Select entry; copies username + password         |
+| `keepassxc-copy-password`         | Select entry; copy password (auto-cleared)       |
+| `keepassxc-copy-username`         | Select entry; copy username                      |
+| `keepassxc-copy-totp`             | Select entry; copy current TOTP (auto-cleared)   |
+| `keepassxc-copy-url`              | Select entry; copy its URL                       |
+| `keepassxc-browse-url`            | Select entry; open its URL with `browse-url`     |
+| `keepassxc-get-login`             | Select entry; copy username + password           |
 | `keepassxc-create-login`          | Create a new entry (offers generated password)   |
 | `keepassxc-generate-password`     | Generate a password with the KeePassXC generator |
 | `keepassxc-delete-entry`          | Delete an entry (to the recycle bin)             |
@@ -126,10 +129,16 @@ association dialog on first use.
 | `keepassxc-cli-estimate-password` | Estimate password entropy (`keepassxc-cli`)      |
 | `keepassxc-associate`             | (Re-)associate Emacs with KeePassXC              |
 
-`keepassxc-copy-url`, `keepassxc-browse-url` and
-`keepassxc-get-database-entries` list all entries of the database,
-which requires "Allow limited access to all entries" to be enabled in
-the KeePassXC browser settings.
+All entry commands select from the full database with incremental
+completion over title and URL, which requires "Allow limited access
+to all entries" to be enabled in the KeePassXC browser settings and
+KeePassXC ≥ 2.8 (the `get-database-entries` request; not yet in a
+released version — use a [snapshot build](https://snapshot.keepassxc.org/)).
+On older KeePassXC the commands automatically fall back to prompting
+for a URL and completing among its entries.
+The browser protocol only provides passwords by URL, so entries
+without a URL signal an error for password/username retrieval;
+copying their TOTP and deleting them still works.
 
 Programmatic API: `keepassxc-get-logins`, `keepassxc-set-login`,
 `keepassxc-get-totp`, `keepassxc-get-database-groups`,

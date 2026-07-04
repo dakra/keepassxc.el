@@ -5,6 +5,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+- **Breaking**: `keepassxc-copy-password`, `keepassxc-copy-username`,
+  `keepassxc-copy-totp`, `keepassxc-get-login` and (interactively)
+  `keepassxc-delete-entry` no longer prompt for a URL.  They select
+  from all database entries with incremental completion matching
+  title and URL, like `keepassxc-copy-url`.  This requires "Allow
+  limited access to all entries" to be enabled in the KeePassXC
+  browser settings and KeePassXC ≥ 2.8 (`get-database-entries` is not
+  in any released version yet); on older KeePassXC the commands fall
+  back to the previous URL-first flow automatically.  The four
+  commands take no arguments anymore; use `keepassxc-get-logins` for
+  programmatic by-URL lookup.
+- Entries without a URL signal a `user-error` for password/username
+  retrieval (the browser protocol only provides passwords by URL);
+  copying their TOTP and deleting them still works via the entry UUID.
+- New error condition `keepassxc-incorrect-action` (errorCode 12).
+
 ## [0.2] - 2026-07-04
 
 Complete modernization for KeePassXC ≥ 2.6 (tested against 2.8-dev).

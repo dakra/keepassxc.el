@@ -102,6 +102,7 @@ plstore persistence is replaced with an in-memory alist."
                     ("6" . keepassxc-denied)
                     ("8" . keepassxc-not-associated)
                     ("10" . keepassxc-not-associated)
+                    ("12" . keepassxc-incorrect-action)
                     ("15" . keepassxc-no-logins)
                     ("42" . keepassxc-error)))
       (puthash "errorCode" (car case) msg)
@@ -390,6 +391,116 @@ Accepting it would bypass the crypto_box authentication."
                         . ((:login "a" :password "b" :name "NoUrl"
                             :uuid "u-1" :group "Web")))))
     (should-error (keepassxc-copy-url) :type 'user-error)))
+
+(ert-deftest keepassxc-tests-resolve-database-entry ()
+  "resolve-database-entry picks the login matching the entry uuid."
+  (keepassxc-tests--with-mock nil
+    (let* ((entries (keepassxc-get-database-entries))
+           (entry (seq-find (lambda (e) (equal (gethash "uuid" e) "uuid-2"))
+                            entries))
+           (login (keepassxc--resolve-database-entry entry)))
+      (should (equal (gethash "login" login) "bob"))
+      (should (equal (gethash "password" login) "hunter2")))))
+
+(ert-deftest keepassxc-tests-resolve-database-entry-no-url ()
+  "resolve-database-entry on an entry without URL signals a `user-error'."
+  (let ((entry (make-hash-table :test #'equal)))
+    (puthash "title" "NoUrl" entry)
+    (puthash "uuid" "u-1" entry)
+    (puthash "url" "" entry)
+    (let ((err (should-error (keepassxc--resolve-database-entry entry)
+                             :type 'user-error)))
+      (should (string-match-p "no URL" (cadr err))))))
+
+(ert-deftest keepassxc-tests-copy-password ()
+  "copy-password selects from all entries and copies the right password."
+  (keepassxc-tests--with-mock nil
+    (let ((kill-ring nil)
+          (kill-ring-yank-pointer nil)
+          (interprogram-cut-function nil)
+          (interprogram-paste-function nil)
+          (keepassxc-password-timeout nil)
+          (keepassxc--clear-timer nil)
+          (keepassxc--pending-secret nil))
+      (cl-letf (((symbol-function 'completing-read)
+                 (lambda (_prompt table &rest _)
+                   ;; Both example.com entries are titled "Example";
+                   ;; the second gets a "<2>" suffix.  Pick that one.
+                   (or (seq-find (lambda (label)
+                                   (string-suffix-p "<2>" label))
+                                 (all-completions "" table))
+                       (ert-fail "No deduplicated label found")))))
+        (keepassxc-copy-password))
+      (should (equal (current-kill 0 t) "hunter2")))))
+
+(ert-deftest keepassxc-tests-copy-password-no-url-entry ()
+  "copy-password on an entry without URL signals a `user-error'."
+  (keepassxc-tests--with-mock
+      (list :entries '((""
+                        . ((:login "a" :password "b" :name "NoUrl"
+                            :uuid "u-1" :group "Web")))))
+    (should-error (keepassxc-copy-password) :type 'user-error)))
+
+(ert-deftest keepassxc-tests-copy-totp-no-url-entry ()
+  "copy-totp works for an entry without URL via its uuid."
+  (keepassxc-tests--with-mock
+      (list :entries '((""
+                        . ((:login "a" :password "b" :name "NoUrl"
+                            :uuid "u-9" :group "Web")))))
+    (let ((kill-ring nil)
+          (kill-ring-yank-pointer nil)
+          (interprogram-cut-function nil)
+          (interprogram-paste-function nil)
+          (keepassxc-password-timeout nil)
+          (keepassxc--clear-timer nil)
+          (keepassxc--pending-secret nil))
+      (keepassxc-copy-totp)
+      (should (equal (current-kill 0 t) "123456"))
+      (should (equal (gethash "uuid"
+                              (car (keepassxc-mock-requests-for
+                                    mock "inner:get-totp")))
+                     "u-9")))))
+
+(ert-deftest keepassxc-tests-get-login-returns-entry ()
+  "get-login returns the resolved login entry."
+  (keepassxc-tests--with-mock nil
+    (cl-letf (((symbol-function 'completing-read)
+               (lambda (_prompt table &rest _)
+                 (or (seq-find (lambda (label)
+                                 (string-search "mail.example.com" label))
+                               (all-completions "" table))
+                     (ert-fail "No label for the mail entry")))))
+      (let ((entry (keepassxc-get-login)))
+        (should (equal (gethash "login" entry) "carol"))
+        (should (equal (gethash "password" entry) "imap-pass"))))))
+
+(ert-deftest keepassxc-tests-copy-password-fallback-old-server ()
+  "copy-password falls back to the URL flow when listing is unsupported.
+KeePassXC before 2.8 answers get-database-entries with
+\"Incorrect action\" (errorCode 12)."
+  (keepassxc-tests--with-mock nil
+    (let ((kill-ring nil)
+          (kill-ring-yank-pointer nil)
+          (interprogram-cut-function nil)
+          (interprogram-paste-function nil)
+          (keepassxc-password-timeout nil)
+          (keepassxc--clear-timer nil)
+          (keepassxc--pending-secret nil))
+      (cl-letf (((symbol-function 'keepassxc-get-database-entries)
+                 (lambda ()
+                   (signal 'keepassxc-incorrect-action
+                           '("Incorrect action" 12))))
+                ((symbol-function 'keepassxc--read-url)
+                 (lambda (&rest _) "https://example.com"))
+                ((symbol-function 'completing-read)
+                 (lambda (_prompt table &rest _)
+                   ;; URL-flow labels are "Name (login)".
+                   (or (seq-find (lambda (label)
+                                   (string-search "(bob)" label))
+                                 (all-completions "" table))
+                       (ert-fail "No label for bob")))))
+        (keepassxc-copy-password))
+      (should (equal (current-kill 0 t) "hunter2")))))
 
 (ert-deftest keepassxc-tests-read-database-entry-denied-hint ()
   "A denied get-database-entries request hints at the KeePassXC setting."
