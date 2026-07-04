@@ -29,6 +29,13 @@ Complete modernization for KeePassXC ≥ 2.6 (tested against 2.8-dev).
   override with `keepassxc-socket-path`.
 - Error hierarchy (`keepassxc-error`, `keepassxc-database-locked`,
   `keepassxc-not-associated`, ...) mapped from KeePassXC error codes.
+- `keepassxc-lock-all-databases` and `keepassxc-open-database` work
+  without D-Bus (macOS included) by invoking `keepassxc-command`,
+  which reaches the running KeePassXC through its single-instance
+  socket.
+- Offline generators backed by `keepassxc-cli`
+  (`keepassxc-cli-command`): `keepassxc-cli-generate-password`,
+  `keepassxc-cli-diceware`, `keepassxc-cli-estimate-password`.
 - ERT test suite with a full in-Emacs mock KeePassXC server;
   GitHub Actions CI (Linux + macOS × Emacs 28.2/29.4/30.1).
 

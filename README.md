@@ -31,8 +31,12 @@ All traffic is encrypted with libsodium `crypto_box`
   kept GPG-encrypted in a [plstore](https://www.gnu.org/software/emacs/manual/html_node/epa/Encrypting_002fdecrypting-gpg-files.html)
   (`keepassxc-associations.plist`); the transport keypair is ephemeral
   per connection.
-- **D-Bus commands** (Linux): open/lock/close databases,
-  `keepassxc-exit`, hardware key handling.
+- **Application control**: `keepassxc-lock-all-databases` and
+  `keepassxc-open-database` work on every platform; closing databases,
+  quitting and non-interactive unlock need D-Bus (Linux).
+- **Offline generators**: `keepassxc-cli-generate-password`,
+  `keepassxc-cli-diceware` and `keepassxc-cli-estimate-password` run
+  `keepassxc-cli` — no unlocked database, no running KeePassXC needed.
 
 ## Requirements
 
@@ -92,20 +96,25 @@ association dialog on first use.
 
 ## Usage
 
-| Command                       | Description                                            |
-|-------------------------------|--------------------------------------------------------|
-| `keepassxc`                   | Transient menu with all commands                       |
-| `keepassxc-copy-password`     | Copy password (auto-cleared from kill-ring)            |
-| `keepassxc-copy-username`     | Copy username                                          |
-| `keepassxc-copy-totp`         | Copy current TOTP (auto-cleared)                       |
-| `keepassxc-get-login`         | Select entry; copies username + password               |
-| `keepassxc-create-login`      | Create a new entry (offers generated password)         |
-| `keepassxc-generate-password` | Generate a password with the KeePassXC generator       |
-| `keepassxc-delete-entry`      | Delete an entry (to the recycle bin)                   |
-| `keepassxc-create-new-group`  | Create a group (`"emacs/mail"` nests)                  |
-| `keepassxc-request-autotype`  | Trigger KeePassXC global auto-type                     |
-| `keepassxc-lock-database`     | Lock the current database                              |
-| `keepassxc-associate`         | (Re-)associate Emacs with KeePassXC                    |
+| Command                           | Description                                      |
+|-----------------------------------|--------------------------------------------------|
+| `keepassxc`                       | Transient menu with all commands                 |
+| `keepassxc-copy-password`         | Copy password (auto-cleared from kill-ring)      |
+| `keepassxc-copy-username`         | Copy username                                    |
+| `keepassxc-copy-totp`             | Copy current TOTP (auto-cleared)                 |
+| `keepassxc-get-login`             | Select entry; copies username + password         |
+| `keepassxc-create-login`          | Create a new entry (offers generated password)   |
+| `keepassxc-generate-password`     | Generate a password with the KeePassXC generator |
+| `keepassxc-delete-entry`          | Delete an entry (to the recycle bin)             |
+| `keepassxc-create-new-group`      | Create a group (`"emacs/mail"` nests)            |
+| `keepassxc-request-autotype`      | Trigger KeePassXC global auto-type               |
+| `keepassxc-lock-database`         | Lock the current database                        |
+| `keepassxc-lock-all-databases`    | Lock all open databases                          |
+| `keepassxc-open-database`         | Open a database in KeePassXC                     |
+| `keepassxc-cli-generate-password` | Generate a password offline (`keepassxc-cli`)    |
+| `keepassxc-cli-diceware`          | Generate a diceware passphrase (`keepassxc-cli`) |
+| `keepassxc-cli-estimate-password` | Estimate password entropy (`keepassxc-cli`)      |
+| `keepassxc-associate`             | (Re-)associate Emacs with KeePassXC              |
 
 Programmatic API: `keepassxc-get-logins`, `keepassxc-set-login`,
 `keepassxc-get-totp`, `keepassxc-get-database-groups`,
@@ -161,12 +170,28 @@ auth-source's negative cache via the `database-unlocked` signal.
   This package's socket protocol works on macOS too and offers more
   (TOTP, generator, groups, auto-type).
 
-## D-Bus (Linux only)
+## Application control
 
-`keepassxc-open-database` (also with password/key file),
-`keepassxc-lock-all-databases`, `keepassxc-close-all-databases`,
-`keepassxc-exit`, `keepassxc-refresh-hardware-keys`.  These need a
-D-Bus session bus and are hidden from the transient menu elsewhere.
+`keepassxc-lock-all-databases` and `keepassxc-open-database` work on
+every platform: with a D-Bus session they use the KeePassXC D-Bus
+interface, otherwise they invoke `keepassxc-command` (`--lock` /
+database path), which reaches the running KeePassXC through its
+single-instance socket.
+Opening a database shows the unlock prompt there.
+
+D-Bus only (Linux): `keepassxc-open-database-password` (also with key
+file) for non-interactive unlock, `keepassxc-close-all-databases`,
+`keepassxc-exit`, `keepassxc-refresh-hardware-keys`.  These are hidden
+from the transient menu without a D-Bus session.
+
+## keepassxc-cli
+
+`keepassxc-cli-generate-password`, `keepassxc-cli-diceware` and
+`keepassxc-cli-estimate-password` run the `keepassxc-cli` program
+(`keepassxc-cli-command`) — they need no running KeePassXC and no
+database.  Passwords travel over stdin only, never on the command
+line.  On macOS the binaries are picked up from the application
+bundle automatically when not on `PATH`.
 
 ## Development
 

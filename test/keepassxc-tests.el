@@ -444,6 +444,112 @@ Accepting it would bypass the crypto_box authentication."
         (should (equal (gethash "password" inner) "new-pass"))))))
 
 
+;;; keepassxc-cli and application control
+
+(ert-deftest keepassxc-tests-cli-output-and-quoting ()
+  "`keepassxc--cli' shell-quotes args and returns trimmed stdout."
+  (let ((keepassxc-cli-command "keepassxc-cli --quiet")
+        captured)
+    (cl-letf (((symbol-function 'call-process-region)
+               (lambda (_input _end _program _delete _buffer _display
+                        &rest args)
+                 (setq captured (car (last args)))
+                 (insert "s3cret!\n")
+                 0)))
+      (should (equal (keepassxc--cli nil "generate" "-x" "a b") "s3cret!"))
+      (should (equal captured
+                     (concat "keepassxc-cli --quiet generate -x "
+                             (shell-quote-argument "a b")))))))
+
+(ert-deftest keepassxc-tests-cli-nonzero-exit ()
+  "`keepassxc--cli' signals a `user-error' on non-zero exit."
+  (cl-letf (((symbol-function 'call-process-region)
+             (lambda (&rest _) 1)))
+    (should-error (keepassxc--cli nil "generate") :type 'user-error)))
+
+(ert-deftest keepassxc-tests-cli-input-via-stdin ()
+  "`keepassxc--cli' passes INPUT on stdin, never in the command line."
+  (let (captured-input captured-command)
+    (cl-letf (((symbol-function 'call-process-region)
+               (lambda (input _end _program _delete _buffer _display
+                        &rest args)
+                 (setq captured-input input
+                       captured-command (car (last args)))
+                 (insert "Entropy: 42\n")
+                 0)))
+      (should (equal (keepassxc-cli-estimate-password "hunter2")
+                     "Entropy: 42"))
+      (should (equal captured-input "hunter2\n"))
+      (should-not (string-search "hunter2" captured-command)))))
+
+(ert-deftest keepassxc-tests-cli-generate-args ()
+  "`keepassxc-cli-generate-password' passes length and options."
+  (let ((keepassxc-cli-generate-options '("--upper" "--numeric"))
+        captured)
+    (cl-letf (((symbol-function 'call-process-region)
+               (lambda (_input _end _program _delete _buffer _display
+                        &rest args)
+                 (setq captured (car (last args)))
+                 (insert "pw\n")
+                 0)))
+      (should (equal (keepassxc-cli-generate-password 20) "pw"))
+      (should (string-search " generate -L 20 --upper --numeric" captured)))))
+
+(ert-deftest keepassxc-tests-lock-all-databases-fallback ()
+  "Without D-Bus, locking shells out to `keepassxc-command' --lock."
+  (let ((keepassxc-command "flatpak run org.keepassxc.KeePassXC")
+        captured)
+    (cl-letf (((symbol-function 'keepassxc--dbus-available-p)
+               (lambda () nil))
+              ((symbol-function 'call-process-shell-command)
+               (lambda (command &rest _)
+                 (setq captured command)
+                 0)))
+      (keepassxc-lock-all-databases)
+      (should (equal captured
+                     "flatpak run org.keepassxc.KeePassXC --lock")))
+    (cl-letf (((symbol-function 'keepassxc--dbus-available-p)
+               (lambda () nil))
+              ((symbol-function 'call-process-shell-command)
+               (lambda (&rest _) 1)))
+      (should-error (keepassxc-lock-all-databases) :type 'user-error))))
+
+(ert-deftest keepassxc-tests-lock-all-databases-dbus-error-falls-back ()
+  "A failing D-Bus call falls back to the command line."
+  (unless (get 'dbus-error 'error-conditions)
+    (define-error 'dbus-error "D-Bus error"))
+  (let ((keepassxc-command "keepassxc")
+        captured)
+    (cl-letf (((symbol-function 'keepassxc--dbus-available-p)
+               (lambda () t))
+              ((symbol-function 'keepassxc--call-dbus-method)
+               (lambda (&rest _) (signal 'dbus-error '("no such service"))))
+              ((symbol-function 'call-process-shell-command)
+               (lambda (command &rest _)
+                 (setq captured command)
+                 0)))
+      (keepassxc-lock-all-databases)
+      (should (equal captured "keepassxc --lock")))))
+
+(ert-deftest keepassxc-tests-open-database-fallback ()
+  "Without D-Bus, opening a database shells out to `keepassxc-command'."
+  (let ((keepassxc-command "keepassxc")
+        captured)
+    (cl-letf (((symbol-function 'keepassxc--dbus-available-p)
+               (lambda () nil))
+              ((symbol-function 'start-process-shell-command)
+               (lambda (_name _buffer command)
+                 (setq captured command)
+                 nil))
+              ((symbol-function 'set-process-sentinel) #'ignore))
+      (keepassxc-open-database "~/passwords/my db.kdbx")
+      (should (equal captured
+                     (concat "keepassxc "
+                             (shell-quote-argument
+                              (expand-file-name
+                               "~/passwords/my db.kdbx"))))))))
+
+
 ;;; Plstore persistence (needs gpg)
 
 (ert-deftest keepassxc-tests-plstore-roundtrip ()

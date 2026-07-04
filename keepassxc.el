@@ -37,8 +37,15 @@
 ;;   packages like Gnus, ERC or Forge can read and create credentials
 ;;   in your KeePassXC database.
 ;;
-;; - Over the KeePassXC D-Bus interface (Linux only) to open, lock and
-;;   close databases.
+;; - Application control: `keepassxc-lock-all-databases' and
+;;   `keepassxc-open-database' reach the running KeePassXC through
+;;   its single-instance socket on every platform; closing databases,
+;;   quitting and unlocking with a password additionally need the
+;;   KeePassXC D-Bus interface (Linux only).
+;;
+;; - Offline password generation (`keepassxc-cli-generate-password',
+;;   `keepassxc-cli-diceware', `keepassxc-cli-estimate-password')
+;;   through the keepassxc-cli program, no running KeePassXC needed.
 ;;
 ;; Setup: enable "Browser Integration" in the KeePassXC settings, then
 ;; run M-x keepassxc-associate and confirm the dialog KeePassXC shows.
@@ -60,7 +67,7 @@
 
 (declare-function dbus-call-method "dbus")
 
-
+
 ;;; Customize
 
 (defgroup keepassxc nil
@@ -68,9 +75,39 @@
   :prefix "keepassxc-"
   :group 'tools)
 
-(defcustom keepassxc-command "keepassxc"
-  "Filename of the keepassxc executable."
+(defun keepassxc--default-command (name)
+  "Return the default shell command for the KeePassXC program NAME.
+On macOS, fall back to the application bundle when NAME is not
+in variable `exec-path'."
+  (let ((bundled (concat "/Applications/KeePassXC.app/Contents/MacOS/" name)))
+    (if (and (eq system-type 'darwin)
+             (not (executable-find name))
+             (file-executable-p bundled))
+        bundled
+      name)))
+
+(defcustom keepassxc-command (keepassxc--default-command "keepassxc")
+  "Shell command that runs the keepassxc program.
+It is interpreted by the shell, so it may contain arguments
+\(e.g. \"flatpak run org.keepassxc.KeePassXC\")."
   :type 'string)
+
+(defcustom keepassxc-cli-command (keepassxc--default-command "keepassxc-cli")
+  "Shell command that runs the keepassxc-cli program.
+It is interpreted by the shell, so it may contain arguments
+\(e.g. \"flatpak run --command=keepassxc-cli org.keepassxc.KeePassXC\")."
+  :type 'string)
+
+(defcustom keepassxc-cli-generate-options nil
+  "Extra keepassxc-cli options for `keepassxc-cli-generate-password'.
+For example (\"--upper\" \"--lower\" \"--numeric\" \"--special\").
+When nil, keepassxc-cli uses its default character classes."
+  :type '(repeat string))
+
+(defcustom keepassxc-cli-diceware-words nil
+  "Number of words for `keepassxc-cli-diceware'.
+When nil, keepassxc-cli uses its default word count."
+  :type '(choice (const :tag "keepassxc-cli default" nil) natnum))
 
 (defcustom keepassxc-database-file nil
   "Default KeePassXC database file."
@@ -128,7 +165,7 @@ Each function is called with two arguments: the action string
 \(for example \"database-locked\" or \"database-unlocked\") and
 the parsed message as a hash-table.")
 
-
+
 ;;; Errors
 
 (define-error 'keepassxc-error "KeePassXC error")
@@ -161,7 +198,7 @@ the parsed message as a hash-table.")
          (symbol (alist-get code keepassxc--error-conditions 'keepassxc-error)))
     (cons symbol (list text code))))
 
-
+
 ;;; Session
 
 (cl-defstruct (keepassxc--session (:constructor keepassxc--session-create)
@@ -189,7 +226,7 @@ the parsed message as a hash-table.")
   (or keepassxc--session
       (setq keepassxc--session (keepassxc--session-create))))
 
-
+
 ;;; Socket discovery
 
 (defconst keepassxc--socket-name "org.keepassxc.KeePassXC.BrowserServer"
@@ -226,7 +263,7 @@ Ordered by preference; matches the lookup logic of KeePassXC's
               (list (concat "Cannot locate the KeePassXC socket; is KeePassXC"
                             " running with browser integration enabled?")))))
 
-
+
 ;;; Transport
 
 (defconst keepassxc--max-message-size (* 16 1024 1024)
@@ -513,7 +550,7 @@ to unlock a locked database."
        :triggerUnlock ,(if trigger-unlock "true" "false"))
      timeout)))
 
-
+
 ;;; Association persistence
 
 (defvar keepassxc--plstore nil
@@ -544,7 +581,7 @@ to unlock a locked database."
     (plstore-put store db-hash `(:id ,id) `(:id-key ,id-key))
     (plstore-save store)))
 
-
+
 ;;; Association
 
 (defun keepassxc--fetch-db-hash (session)
@@ -607,7 +644,7 @@ association id."
           (keepassxc--associate session))
         (keepassxc--session-id session)))))
 
-
+
 ;;; Protocol actions
 
 (defun keepassxc-get-database-hash ()
@@ -783,7 +820,7 @@ once you accept it there.  Interactively, also copy it to the
     (keepassxc--cleanup-session session))
   (message "Disconnected from KeePassXC"))
 
-
+
 ;;; Entry selection and copy commands
 
 (defvar keepassxc--url-history nil
@@ -955,8 +992,95 @@ password generator."
   (keepassxc-set-login url login password)
   (message "KeePassXC entry for %s created" url))
 
+
+;;; keepassxc-cli (offline password generation)
 
-;;; D-Bus interface (Linux only)
+(defun keepassxc--shell-command (command &rest args)
+  "Return shell COMMAND with ARGS appended, shell-quoted."
+  (concat command
+          (mapconcat (lambda (arg)
+                       (concat " " (shell-quote-argument arg)))
+                     args "")))
+
+(defun keepassxc--command-executable-p (command)
+  "Return non-nil when the program run by shell COMMAND can be found."
+  (when-let* ((program (car (split-string-shell-command command))))
+    (or (executable-find program) (file-executable-p program))))
+
+(defun keepassxc--cli-available-p ()
+  "Return non-nil when the keepassxc-cli program can be found."
+  (keepassxc--command-executable-p keepassxc-cli-command))
+
+(defun keepassxc--cli (input &rest args)
+  "Run `keepassxc-cli-command' with ARGS and return its trimmed output.
+INPUT, when non-nil, is sent to the process on stdin; secrets
+must be passed this way, never as arguments.  Signal a
+`user-error' when the command exits non-zero."
+  (let ((command (apply #'keepassxc--shell-command
+                        keepassxc-cli-command args)))
+    (with-temp-buffer
+      (let ((status (call-process-region (or input "") nil shell-file-name
+                                         nil (list t nil) nil
+                                         shell-command-switch command)))
+        (unless (eql status 0)
+          (user-error "Command %s failed (exit %s)" command status))
+        (string-trim (buffer-string))))))
+
+;;;###autoload
+(defun keepassxc-cli-generate-password (&optional length)
+  "Generate a random password with keepassxc-cli.
+LENGTH (interactively, a numeric prefix argument) overrides the
+default password length; `keepassxc-cli-generate-options' selects
+the character classes.  Interactively, copy the password to the
+`kill-ring' (cleared after `keepassxc-password-timeout' seconds).
+Return the password."
+  (interactive "P")
+  (let ((password (apply #'keepassxc--cli nil "generate"
+                         (append (when length
+                                   (list "-L" (number-to-string
+                                               (prefix-numeric-value length))))
+                                 keepassxc-cli-generate-options))))
+    (when (called-interactively-p 'interactive)
+      (keepassxc--kill-secret password "Generated password"))
+    password))
+
+;;;###autoload
+(defun keepassxc-cli-diceware (&optional words)
+  "Generate a diceware passphrase with keepassxc-cli.
+WORDS (interactively, a numeric prefix argument) overrides
+`keepassxc-cli-diceware-words'.  Interactively, copy the
+passphrase to the `kill-ring' (cleared after
+`keepassxc-password-timeout' seconds).  Return the passphrase."
+  (interactive "P")
+  (let* ((words (if words
+                    (prefix-numeric-value words)
+                  keepassxc-cli-diceware-words))
+         (passphrase (apply #'keepassxc--cli nil "diceware"
+                            (when words
+                              (list "-W" (number-to-string words))))))
+    (when (called-interactively-p 'interactive)
+      (keepassxc--kill-secret passphrase "Diceware passphrase"))
+    passphrase))
+
+;;;###autoload
+(defun keepassxc-cli-estimate-password (password &optional advanced)
+  "Estimate the entropy of PASSWORD with keepassxc-cli.
+With ADVANCED (interactively, a prefix argument) show the
+detailed zxcvbn analysis.  PASSWORD is sent to keepassxc-cli on
+stdin and never appears in the command line."
+  (interactive (list (read-passwd "Estimate password: ")
+                     current-prefix-arg))
+  (let ((output (apply #'keepassxc--cli (concat password "\n") "estimate"
+                       (when advanced '("-a")))))
+    (when (called-interactively-p 'interactive)
+      ;; Echo area only: the analysis quotes fragments of PASSWORD,
+      ;; which must not end up in the *Messages* buffer.
+      (let ((message-log-max nil))
+        (message "%s" output)))
+    output))
+
+
+;;; Application control (command line and D-Bus)
 
 (defconst keepassxc--dbus-service "org.keepassxc.KeePassXC.MainWindow")
 (defconst keepassxc--dbus-path "/keepassxc")
@@ -976,19 +1100,54 @@ password generator."
   (apply #'dbus-call-method :session keepassxc--dbus-service
          keepassxc--dbus-path keepassxc--dbus-interface method args))
 
+(defun keepassxc--try-dbus-method (method &rest args)
+  "Call the KeePassXC D-Bus METHOD with ARGS.
+Return non-nil on success and nil when D-Bus is unavailable or
+the call fails (e.g. KeePassXC is not on the bus)."
+  (and (keepassxc--dbus-available-p)
+       (condition-case nil
+           (progn (apply #'keepassxc--call-dbus-method method args) t)
+         (dbus-error nil))))
+
+(defun keepassxc--app-available-p ()
+  "Return non-nil when Emacs can control the KeePassXC application.
+Either over D-Bus or by running `keepassxc-command'."
+  (or (keepassxc--dbus-available-p)
+      (keepassxc--command-executable-p keepassxc-command)))
+
+(defun keepassxc--start-app (&rest args)
+  "Start `keepassxc-command' with ARGS asynchronously.
+A non-zero exit is reported in the echo area."
+  (let ((command (apply #'keepassxc--shell-command keepassxc-command args)))
+    (set-process-sentinel
+     (start-process-shell-command "keepassxc" nil command)
+     (lambda (process _event)
+       (when (and (eq (process-status process) 'exit)
+                  (/= (process-exit-status process) 0))
+         (message "Command %s failed (exit %d)"
+                  command (process-exit-status process)))))))
+
 ;;;###autoload
 (defun keepassxc-open ()
   "Start KeePassXC.
 `keepassxc-command' is interpreted by the shell, so it may
 contain arguments (e.g. \"flatpak run org.keepassxc.KeePassXC\")."
   (interactive)
-  (start-process-shell-command "keepassxc" nil keepassxc-command))
+  (keepassxc--start-app))
 
 ;;;###autoload
 (defun keepassxc-lock-all-databases ()
-  "Lock all opened KeePassXC databases."
+  "Lock all opened KeePassXC databases.
+Uses D-Bus when possible; otherwise runs `keepassxc-command'
+with --lock, which reaches the running KeePassXC through its
+single-instance socket on every platform."
   (interactive)
-  (keepassxc--call-dbus-method "lockAllDatabases"))
+  (unless (keepassxc--try-dbus-method "lockAllDatabases")
+    (if (eql 0 (call-process-shell-command
+                (keepassxc--shell-command keepassxc-command "--lock")
+                nil nil))
+        (message "KeePassXC databases locked")
+      (user-error "Locking KeePassXC databases failed"))))
 
 ;;;###autoload
 (defun keepassxc-close-all-databases ()
@@ -1011,9 +1170,14 @@ contain arguments (e.g. \"flatpak run org.keepassxc.KeePassXC\")."
 (defun keepassxc-open-database (db)
   "Open the KeePassXC database DB.
 Interactively, use `keepassxc-database-file' without prompting
-when it is set."
+when it is set.  Uses D-Bus when available; otherwise runs
+`keepassxc-command' with DB, which makes a running KeePassXC
+show the unlock prompt for it (and starts KeePassXC when none
+is running)."
   (interactive (list (keepassxc--read-database-file)))
-  (keepassxc--call-dbus-method "openDatabase" (expand-file-name db)))
+  (let ((db (expand-file-name db)))
+    (unless (keepassxc--try-dbus-method "openDatabase" db)
+      (keepassxc--start-app db))))
 
 ;;;###autoload
 (defun keepassxc-open-database-password (db password)
@@ -1047,7 +1211,7 @@ when it is set."
   (interactive)
   (keepassxc--call-dbus-method "refreshHardwareKeys"))
 
-
+
 ;;; Transient menu
 
 ;;;###autoload (autoload 'keepassxc "keepassxc" "KeePassXC transient menu." t)
@@ -1062,6 +1226,12 @@ when it is set."
     ("D" "Delete entry" keepassxc-delete-entry)]
    ["Database"
     ("g" "Generate password" keepassxc-generate-password)
+    ("G" "Generate (offline)" keepassxc-cli-generate-password
+     :if keepassxc--cli-available-p)
+    ("w" "Diceware passphrase" keepassxc-cli-diceware
+     :if keepassxc--cli-available-p)
+    ("e" "Estimate password" keepassxc-cli-estimate-password
+     :if keepassxc--cli-available-p)
     ("N" "New group" keepassxc-create-new-group)
     ("l" "Lock database" keepassxc-lock-database)
     ("a" "Associate" keepassxc-associate)
@@ -1069,9 +1239,9 @@ when it is set."
    ["Application"
     ("o" "Open KeePassXC" keepassxc-open)
     ("O" "Open database" keepassxc-open-database
-     :if keepassxc--dbus-available-p)
+     :if keepassxc--app-available-p)
     ("L" "Lock all databases" keepassxc-lock-all-databases
-     :if keepassxc--dbus-available-p)
+     :if keepassxc--app-available-p)
     ("C" "Close all databases" keepassxc-close-all-databases
      :if keepassxc--dbus-available-p)
     ("Q" "Quit KeePassXC" keepassxc-exit
