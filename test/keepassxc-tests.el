@@ -294,6 +294,29 @@ Accepting it would bypass the crypto_box authentication."
 
 ;;; Actions
 
+(ert-deftest keepassxc-tests-reconnect-after-server-restart ()
+  "A restarted KeePassXC (new socket file) is detected and reconnected.
+The connection to the previous instance can stay `open' without
+ever answering, so the socket file inode decides staleness."
+  (keepassxc-tests--with-mock nil
+    (should (equal (keepassxc-get-database-hash) "MOCKHASH"))
+    (let ((old-proc (keepassxc--session-process keepassxc--session))
+          mock2)
+      ;; "Restart": silence the old server but keep its accepted
+      ;; connection open, then listen anew on the same path.
+      (setf (keepassxc-mock-hold mock) t)
+      (delete-process (keepassxc-mock-server-proc mock))
+      (delete-file socket)
+      (setq mock2 (keepassxc-mock-start socket :db-hash "NEWHASH"))
+      (unwind-protect
+          (progn
+            ;; The zombie connection still looks alive.
+            (should (process-live-p old-proc))
+            (should (equal (keepassxc-get-database-hash) "NEWHASH"))
+            (should-not (eq (keepassxc--session-process keepassxc--session)
+                            old-proc)))
+        (keepassxc-mock-stop mock2)))))
+
 (ert-deftest keepassxc-tests-generate-password ()
   "generate-password returns the password field of the reply."
   (keepassxc-tests--with-mock nil

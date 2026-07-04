@@ -26,6 +26,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `called-interactively-p`.
 
 ### Fixed
+- Restarting KeePassXC no longer leaves Emacs with a dead connection
+  that times out on every request until `keepassxc-disconnect`: a
+  connection whose socket file changed (KeePassXC recreates it on
+  restart) is detected as stale and reopened automatically.
 - `keepassxc-generate-password`, `keepassxc-cli-generate-password`,
   `keepassxc-cli-diceware` and `keepassxc-cli-estimate-password` did
   not copy (or display) their result when invoked from the

@@ -208,6 +208,7 @@ the parsed message as a hash-table.")
                                   (:copier nil))
   "State of one connection to KeePassXC."
   process         ; network process, or nil when disconnected
+  socket-identity ; (PATH . INODE) of the socket file when connected
   buffer          ; hidden buffer accumulating partial server output
   keypair         ; ephemeral transport keypair, alist with `pk' and `sk'
   server-key      ; server public key for this connection
@@ -296,6 +297,8 @@ native-messaging proxy, not to the direct socket).")
                              socket (error-message-string err))))))
     (process-put proc 'keepassxc-session session)
     (setf (keepassxc--session-process session) proc
+          (keepassxc--session-socket-identity session)
+          (cons socket (file-attribute-inode-number (file-attributes socket)))
           (keepassxc--session-buffer session) buffer
           (keepassxc--session-keypair session) (sodium-box-keypair)
           (keepassxc--session-server-key session) nil
@@ -316,6 +319,7 @@ native-messaging proxy, not to the direct socket).")
   (when (buffer-live-p (keepassxc--session-buffer session))
     (kill-buffer (keepassxc--session-buffer session)))
   (setf (keepassxc--session-process session) nil
+        (keepassxc--session-socket-identity session) nil
         (keepassxc--session-buffer session) nil
         (keepassxc--session-server-key session) nil
         (keepassxc--session-db-hash session) nil))
@@ -517,13 +521,25 @@ or signal the error captured by the filter."
               (list "KeePassXC did not send a public key")))
     (setf (keepassxc--session-server-key session) server-key)))
 
+(defun keepassxc--connection-stale-p (session)
+  "Return non-nil when SESSION's socket file changed since connecting.
+KeePassXC removes and recreates its socket on restart.  The
+connection to the previous instance can stay in state `open'
+without ever answering, so compare the socket file's inode with
+the one recorded at connect time."
+  (when-let* ((identity (keepassxc--session-socket-identity session)))
+    (not (eql (file-attribute-inode-number (file-attributes (car identity)))
+              (cdr identity)))))
+
 (defun keepassxc--ensure-connection (session)
   "Connect SESSION to KeePassXC unless it is connected already.
-A connection without a completed handshake is torn down and
-reopened."
+A connection without a completed handshake, and a connection to a
+KeePassXC instance that has since been restarted, is torn down
+and reopened."
   (let ((proc (keepassxc--session-process session)))
     (unless (and (process-live-p proc)
-                 (keepassxc--session-server-key session))
+                 (keepassxc--session-server-key session)
+                 (not (keepassxc--connection-stale-p session)))
       (when (process-live-p proc)
         (delete-process proc))
       (keepassxc--cleanup-session session)
