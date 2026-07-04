@@ -299,6 +299,30 @@ Accepting it would bypass the crypto_box authentication."
   (keepassxc-tests--with-mock nil
     (should (equal (keepassxc-generate-password) "mock-generated-password"))))
 
+(ert-deftest keepassxc-tests-generate-password-copies-under-advice ()
+  "Interactive calls copy to the kill-ring even when the command is
+advised, as transient does with its suffix commands (this breaks
+`called-interactively-p')."
+  (keepassxc-tests--with-mock nil
+    (let ((kill-ring nil)
+          (kill-ring-yank-pointer nil)
+          (interprogram-cut-function nil)
+          (interprogram-paste-function nil)
+          (keepassxc-password-timeout nil)
+          (keepassxc--clear-timer nil)
+          (keepassxc--pending-secret nil))
+      ;; Plain function call: no copy.
+      (keepassxc-generate-password)
+      (should-not kill-ring)
+      (add-function :around (symbol-function 'keepassxc-generate-password)
+                    (lambda (fn &rest args) (apply fn args))
+                    '((name . keepassxc-tests--advice)))
+      (unwind-protect
+          (call-interactively #'keepassxc-generate-password)
+        (remove-function (symbol-function 'keepassxc-generate-password)
+                         'keepassxc-tests--advice))
+      (should (equal (current-kill 0 t) "mock-generated-password")))))
+
 (ert-deftest keepassxc-tests-get-totp ()
   "get-totp returns the TOTP for an entry uuid."
   (keepassxc-tests--with-mock nil

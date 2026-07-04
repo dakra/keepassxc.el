@@ -674,14 +674,15 @@ association.  The association is stored encrypted in
          (keepassxc--session-id session))))
 
 ;;;###autoload
-(defun keepassxc-get-logins (url &optional submit-url http-auth)
+(defun keepassxc-get-logins (url &optional submit-url http-auth interactive)
   "Return a list of KeePassXC entries matching URL.
 Each entry is a hash-table with keys like \"login\",
 \"password\", \"name\", \"uuid\", \"group\" and optionally
 \"totp\" and \"stringFields\".  SUBMIT-URL restricts matches to a
 form-submit URL; HTTP-AUTH non-nil requests HTTP-auth entries.
-Signal `keepassxc-no-logins' when nothing matches."
-  (interactive (list (keepassxc--read-url)))
+Signal `keepassxc-no-logins' when nothing matches.  With
+INTERACTIVE non-nil, message the number of matches."
+  (interactive (list (keepassxc--read-url) nil nil t))
   (let ((session (keepassxc--default-session)))
     (keepassxc--ensure-association session)
     (let* ((id (keepassxc--session-id session))
@@ -694,7 +695,7 @@ Signal `keepassxc-no-logins' when nothing matches."
                         ,@(when http-auth '(:httpAuth "true"))
                         :keys ,(vector (list :id id :key id-key)))))
            (entries (append (gethash "entries" response) nil)))
-      (when (called-interactively-p 'interactive)
+      (when interactive
         (message "%d KeePassXC entries for %s" (length entries) url))
       entries)))
 
@@ -783,12 +784,13 @@ settings."
             nil)))
 
 ;;;###autoload
-(defun keepassxc-generate-password ()
+(defun keepassxc-generate-password (&optional copy)
   "Generate a password with the KeePassXC password generator.
 KeePassXC opens its generator dialog; the password is returned
-once you accept it there.  Interactively, also copy it to the
-`kill-ring' (cleared after `keepassxc-password-timeout' seconds)."
-  (interactive)
+once you accept it there.  With COPY non-nil (interactively,
+always), also copy it to the `kill-ring' (cleared after
+`keepassxc-password-timeout' seconds)."
+  (interactive (list t))
   (let ((session (keepassxc--default-session)))
     (keepassxc--ensure-connection session)
     (let* ((response (keepassxc--request
@@ -804,7 +806,7 @@ once you accept it there.  Interactively, also copy it to the
       (unless password
         (signal 'keepassxc-protocol-error
                 (list "No password in generate-password reply")))
-      (when (called-interactively-p 'interactive)
+      (when copy
         (keepassxc--kill-secret password "Generated password"))
       password)))
 
@@ -1014,16 +1016,17 @@ immediately."
              what keepassxc-password-timeout)))
 
 ;;;###autoload
-(defun keepassxc-get-login ()
+(defun keepassxc-get-login (&optional copy)
   "Select a KeePassXC entry and return it as a hash-table.
 The entry is selected from all database entries; completion
-matches the entry title and URL.  Interactively, copy the
-username and then the password to the `kill-ring', so the
-password is the most recent kill; the password is cleared after
+matches the entry title and URL.  With COPY non-nil
+\(interactively, always), copy the username and then the
+password to the `kill-ring', so the password is the most recent
+kill; the password is cleared after
 `keepassxc-password-timeout' seconds."
-  (interactive)
+  (interactive (list t))
   (let ((entry (keepassxc--select-login)))
-    (when (called-interactively-p 'interactive)
+    (when copy
       (let ((login (gethash "login" entry)))
         (when (and login (not (string-empty-p login)))
           (kill-new login)))
@@ -1155,52 +1158,54 @@ must be passed this way, never as arguments.  Signal a
         (string-trim (buffer-string))))))
 
 ;;;###autoload
-(defun keepassxc-cli-generate-password (&optional length)
+(defun keepassxc-cli-generate-password (&optional length copy)
   "Generate a random password with keepassxc-cli.
 LENGTH (interactively, a numeric prefix argument) overrides the
 default password length; `keepassxc-cli-generate-options' selects
-the character classes.  Interactively, copy the password to the
-`kill-ring' (cleared after `keepassxc-password-timeout' seconds).
-Return the password."
-  (interactive "P")
+the character classes.  With COPY non-nil (interactively,
+always), copy the password to the `kill-ring' (cleared after
+`keepassxc-password-timeout' seconds).  Return the password."
+  (interactive (list current-prefix-arg t))
   (let ((password (apply #'keepassxc--cli nil "generate"
                          (append (when length
                                    (list "-L" (number-to-string
                                                (prefix-numeric-value length))))
                                  keepassxc-cli-generate-options))))
-    (when (called-interactively-p 'interactive)
+    (when copy
       (keepassxc--kill-secret password "Generated password"))
     password))
 
 ;;;###autoload
-(defun keepassxc-cli-diceware (&optional words)
+(defun keepassxc-cli-diceware (&optional words copy)
   "Generate a diceware passphrase with keepassxc-cli.
 WORDS (interactively, a numeric prefix argument) overrides
-`keepassxc-cli-diceware-words'.  Interactively, copy the
-passphrase to the `kill-ring' (cleared after
-`keepassxc-password-timeout' seconds).  Return the passphrase."
-  (interactive "P")
+`keepassxc-cli-diceware-words'.  With COPY non-nil
+\(interactively, always), copy the passphrase to the `kill-ring'
+\(cleared after `keepassxc-password-timeout' seconds).  Return
+the passphrase."
+  (interactive (list current-prefix-arg t))
   (let* ((words (if words
                     (prefix-numeric-value words)
                   keepassxc-cli-diceware-words))
          (passphrase (apply #'keepassxc--cli nil "diceware"
                             (when words
                               (list "-W" (number-to-string words))))))
-    (when (called-interactively-p 'interactive)
+    (when copy
       (keepassxc--kill-secret passphrase "Diceware passphrase"))
     passphrase))
 
 ;;;###autoload
-(defun keepassxc-cli-estimate-password (password &optional advanced)
+(defun keepassxc-cli-estimate-password (password &optional advanced display)
   "Estimate the entropy of PASSWORD with keepassxc-cli.
 With ADVANCED (interactively, a prefix argument) show the
-detailed zxcvbn analysis.  PASSWORD is sent to keepassxc-cli on
-stdin and never appears in the command line."
+detailed zxcvbn analysis.  With DISPLAY non-nil (interactively,
+always), show the analysis in the echo area.  PASSWORD is sent
+to keepassxc-cli on stdin and never appears in the command line."
   (interactive (list (read-passwd "Estimate password: ")
-                     current-prefix-arg))
+                     current-prefix-arg t))
   (let ((output (apply #'keepassxc--cli (concat password "\n") "estimate"
                        (when advanced '("-a")))))
-    (when (called-interactively-p 'interactive)
+    (when display
       ;; Echo area only: the analysis quotes fragments of PASSWORD,
       ;; which must not end up in the *Messages* buffer.
       (let ((message-log-max nil))
@@ -1325,11 +1330,12 @@ is running)."
   (keepassxc--call-dbus-method "openDatabase" (expand-file-name db)
                                password (expand-file-name key-file)))
 
-(defun keepassxc-hardware-key-supported-p ()
-  "Return non-nil if KeePassXC supports hardware keys."
-  (interactive)
+(defun keepassxc-hardware-key-supported-p (&optional interactive)
+  "Return non-nil if KeePassXC supports hardware keys.
+With INTERACTIVE non-nil, message the result."
+  (interactive (list t))
   (let ((supported (keepassxc--call-dbus-method "isHardwareKeySupported")))
-    (when (called-interactively-p 'interactive)
+    (when interactive
       (message "Hardware keys are %ssupported" (if supported "" "not ")))
     supported))
 

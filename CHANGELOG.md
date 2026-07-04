@@ -21,6 +21,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   retrieval (the browser protocol only provides passwords by URL);
   copying their TOTP and deleting them still works via the entry UUID.
 - New error condition `keepassxc-incorrect-action` (errorCode 12).
+- The generate/diceware/estimate and `keepassxc-get-login` commands
+  take an explicit COPY/DISPLAY argument instead of
+  `called-interactively-p`.
+
+### Fixed
+- `keepassxc-generate-password`, `keepassxc-cli-generate-password`,
+  `keepassxc-cli-diceware` and `keepassxc-cli-estimate-password` did
+  not copy (or display) their result when invoked from the
+  `keepassxc` transient menu: transient advises suffix commands,
+  which makes `called-interactively-p` return nil.
 
 ## [0.2] - 2026-07-04
 
