@@ -1,0 +1,66 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        emacs_version: ['28.2', '29.4', '30.1']
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/checkout@v4
+        with:
+          repository: dakra/sodium.el
+          path: sodium.el
+
+      - uses: purcell/setup-emacs@master
+        with:
+          version: ${{ matrix.emacs_version }}
+
+      - name: Install libsodium (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libsodium-dev pkg-config
+
+      - name: Install libsodium (macOS)
+        if: runner.os == 'macOS'
+        run: brew install libsodium pkg-config
+
+      - name: Build sodium module
+        run: make -C sodium.el
+
+      - name: Byte-compile
+        run: make compile SODIUM_DIR=./sodium.el
+
+      - name: Checkdoc
+        run: make checkdoc SODIUM_DIR=./sodium.el
+
+      - name: Test
+        run: make test SODIUM_DIR=./sodium.el
+
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/checkout@v4
+        with:
+          repository: dakra/sodium.el
+          path: sodium.el
+
+      - uses: purcell/setup-emacs@master
+        with:
+          version: '30.1'
+
+      - run: sudo apt-get update && sudo apt-get install -y libsodium-dev pkg-config
+
+      - run: make -C sodium.el
+
+      - run: make lint SODIUM_DIR=./sodium.el

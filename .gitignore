@@ -1,0 +1,5 @@
+*.elc
+*.eln
+*~
+/.package-lint-elpa/
+/sodium.el/

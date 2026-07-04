@@ -1,0 +1,219 @@
+;;; keepassxc-auth-source.el --- KeePassXC backend for auth-source -*- lexical-binding: t; -*-
+
+;; Copyright (C) 2026 Daniel Kraus <daniel@kraus.my>
+
+;; Author: Daniel Kraus <daniel@kraus.my>
+;; URL: https://github.com/dakra/keepassxc.el
+
+;; This file is not part of GNU Emacs.
+
+;; This program is free software; you can redistribute it and/or modify
+;; it under the terms of the GNU General Public License as published by
+;; the Free Software Foundation, either version 3 of the License, or
+;; (at your option) any later version.
+
+;; This program is distributed in the hope that it will be useful,
+;; but WITHOUT ANY WARRANTY; without even the implied warranty of
+;; MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+;; GNU General Public License for more details.
+
+;; You should have received a copy of the GNU General Public License
+;; along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+;;; Commentary:
+
+;; An `auth-source' backend that looks up (and creates) credentials in
+;; KeePassXC via the browser-integration protocol from keepassxc.el.
+;;
+;; Enable it with:
+;;
+;;   (keepassxc-auth-source-enable)
+;;
+;; Afterwards `auth-source-search' (and thus Gnus, ERC, smtpmail,
+;; Forge and friends) will query the KeePassXC database:
+;;
+;;   (auth-source-search :host "irc.libera.chat" :port "6697")
+;;
+;; Hosts are looked up as URLs; the port (number or service name)
+;; selects the URL scheme, see `keepassxc-auth-source-port-scheme-alist'.
+;; With :create t a missing entry is created in KeePassXC when the
+;; caller invokes the returned :save-function.
+
+;;; Code:
+
+(require 'auth-source)
+(require 'cl-lib)
+(require 'eieio)
+(require 'seq)
+(require 'keepassxc)
+
+(defcustom keepassxc-auth-source-port-scheme-alist
+  '((21 . "ftp")
+    (22 . "ssh")
+    (23 . "telnet")
+    (25 . "smtp")
+    (80 . "http")
+    (110 . "pop3")
+    (119 . "nntp")
+    (143 . "imap")
+    (194 . "irc")
+    (443 . "https")
+    (465 . "smtps")
+    (563 . "nntps")
+    (587 . "smtp")
+    (993 . "imaps")
+    (995 . "pop3s")
+    (6667 . "irc")
+    (6697 . "ircs"))
+  "Alist mapping numeric ports to URL schemes for KeePassXC lookups."
+  :type '(alist :key-type integer :value-type string)
+  :group 'keepassxc)
+
+(defun keepassxc-auth-source--urls (host port)
+  "Return candidate KeePassXC URLs for HOST and PORT.
+A non-numeric PORT (service name like \"imaps\") is used as URL
+scheme directly; a numeric PORT is translated with
+`keepassxc-auth-source-port-scheme-alist'.  The plain HOST with
+`keepassxc-default-url-schema' is always included as fallback."
+  (let* ((port (cond ((null port) nil)
+                     ((symbolp port) (symbol-name port))
+                     (t port)))
+         (scheme (cond ((null port) nil)
+                       ((and (stringp port)
+                             (not (string-match-p "\\`[0-9]+\\'" port)))
+                        port)
+                       (t (alist-get (if (stringp port)
+                                         (string-to-number port)
+                                       port)
+                                     keepassxc-auth-source-port-scheme-alist)))))
+    (delete-dups
+     (delq nil
+           (list (when scheme (format "%s://%s" scheme host))
+                 (if (string-match-p "://" host)
+                     host
+                   (concat keepassxc-default-url-schema host)))))))
+
+(defun keepassxc-auth-source--create (spec)
+  "Return a list with one new auth-source entry for SPEC.
+The entry is only stored in KeePassXC when the caller funcalls
+its :save-function, as per the auth-source create protocol."
+  (let* ((host (seq-find #'stringp (ensure-list (plist-get spec :host))))
+         (port (seq-find (lambda (p) (not (eq p t)))
+                         (ensure-list (plist-get spec :port))))
+         (url (car (keepassxc-auth-source--urls host port)))
+         (user (or (car (ensure-list (plist-get spec :user)))
+                   (read-string (format "KeePassXC username for %s: " url))))
+         (secret (or (plist-get spec :secret)
+                     (read-passwd (format "KeePassXC password for %s@%s: "
+                                          user url)
+                                  t))))
+    (list
+     `(:host ,host
+       ,@(when port (list :port port))
+       :user ,user
+       :secret ,(lambda () secret)
+       :save-function ,(lambda ()
+                         (keepassxc-set-login url user secret)
+                         (message "Saved %s@%s in KeePassXC" user url))))))
+
+(cl-defun keepassxc-auth-source-search (&rest spec
+                                        &key backend type host user port
+                                        max require create delete
+                                        &allow-other-keys)
+  "Search KeePassXC for entries matching SPEC.
+See `auth-source-search' for the meaning of HOST, USER, PORT,
+MAX, REQUIRE, CREATE and DELETE.  TYPE and BACKEND identify this
+backend.  Returns a list of plists with :host, :port, :user and
+a :secret function.  Connection problems, a locked database or a
+declined association yield nil instead of an error."
+  (cl-assert (or (null type) (eq type (slot-value backend 'type))) t)
+  ;; Wildcards (t) cannot be enumerated over the browser protocol.
+  (let ((hosts (seq-filter #'stringp (ensure-list host))))
+    (cond
+     (delete
+      (warn "The keepassxc auth-source backend does not support deletion")
+      nil)
+     ((null hosts) nil)
+     (t
+      (condition-case err
+          (let ((ports (or (seq-remove (lambda (p) (eq p t))
+                                       (ensure-list port))
+                           '(nil)))
+                (users (and user (ensure-list user)))
+                (max (or max 1))
+                (tried-urls nil)
+                (seen-uuids nil)
+                (results nil))
+            (catch 'keepassxc--max
+              (dolist (h hosts)
+                (dolist (p ports)
+                  (dolist (url (keepassxc-auth-source--urls h p))
+                    (unless (member url tried-urls)
+                      (push url tried-urls)
+                      (dolist (entry (condition-case nil
+                                         (keepassxc-get-logins url)
+                                       (keepassxc-no-logins nil)))
+                        (let* ((uuid (gethash "uuid" entry))
+                               (login (gethash "login" entry))
+                               (password (gethash "password" entry))
+                               (result
+                                `(:host ,h
+                                  ,@(when p (list :port p))
+                                  ,@(when (and login
+                                               (not (string-empty-p login)))
+                                      (list :user login))
+                                  :secret ,(lambda () password))))
+                          (when (and (not (member uuid seen-uuids))
+                                     (or (null users) (member login users))
+                                     (seq-every-p (lambda (key)
+                                                    (plist-get result key))
+                                                  require))
+                            (push uuid seen-uuids)
+                            (push result results)
+                            (when (>= (length results) max)
+                              (throw 'keepassxc--max nil))))))))))
+            (or (nreverse results)
+                (and create (keepassxc-auth-source--create spec))))
+        (keepassxc-error
+         (message "keepassxc-auth-source: %s" (error-message-string err))
+         nil))))))
+
+(defvar keepassxc-auth-source-backend
+  (auth-source-backend :source "." ;; not used
+                       :type 'keepassxc
+                       :search-function #'keepassxc-auth-source-search)
+  "Auth-source backend for KeePassXC.")
+
+(defun keepassxc-auth-source-backend-parse (entry)
+  "Create a KeePassXC auth-source backend from ENTRY."
+  (when (eq entry 'keepassxc)
+    (auth-source-backend-parse-parameters entry keepassxc-auth-source-backend)))
+
+(add-hook 'auth-source-backend-parser-functions
+          #'keepassxc-auth-source-backend-parse)
+
+(defun keepassxc-auth-source-clear-cache ()
+  "Forget all cached auth-source results."
+  (interactive)
+  (auth-source-forget-all-cached))
+
+(defun keepassxc-auth-source--on-signal (action _msg)
+  "Flush auth-source caches on KeePassXC database lock and unlock.
+ACTION is the signal name sent by KeePassXC.  In particular,
+negative results cached while the database was locked are
+forgotten as soon as it is unlocked."
+  (when (member action '("database-locked" "database-unlocked"))
+    (auth-source-forget-all-cached)))
+
+;;;###autoload
+(defun keepassxc-auth-source-enable ()
+  "Enable the KeePassXC auth-source backend.
+Add the symbol `keepassxc' to `auth-sources' and flush cached
+auth-source results."
+  (interactive)
+  (add-to-list 'auth-sources 'keepassxc)
+  (add-hook 'keepassxc-signal-functions #'keepassxc-auth-source--on-signal)
+  (auth-source-forget-all-cached))
+
+(provide 'keepassxc-auth-source)
+;;; keepassxc-auth-source.el ends here
