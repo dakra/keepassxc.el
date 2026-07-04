@@ -20,6 +20,9 @@ Complete modernization for KeePassXC ≥ 2.6 (tested against 2.8-dev).
 - Copy commands with kill-ring auto-clear
   (`keepassxc-password-timeout`): `keepassxc-copy-password`,
   `keepassxc-copy-username`, `keepassxc-copy-totp`.
+- `keepassxc-copy-url` and `keepassxc-browse-url`: pick an entry from
+  all database entries (completion matches title and URL) and copy or
+  browse its URL.
 - `keepassxc` transient menu.
 - Entry selection with completion annotations (username, group).
 - Unsolicited server signals (`database-locked`/`database-unlocked`)

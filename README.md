@@ -19,6 +19,8 @@ All traffic is encrypted with libsodium `crypto_box`
   (annotations work with vertico/marginalia out of the box).
   Copied secrets are cleared from the kill-ring after
   `keepassxc-password-timeout` (45s default), like password-store.
+  `keepassxc-copy-url` and `keepassxc-browse-url` pick an entry from
+  the whole database — completion matches title *and* URL.
 - **auth-source backend**: `(keepassxc-auth-source-enable)` and your
   KeePassXC database answers `auth-source-search`, including entry
   creation via `:create t`.
@@ -102,6 +104,8 @@ association dialog on first use.
 | `keepassxc-copy-password`         | Copy password (auto-cleared from kill-ring)      |
 | `keepassxc-copy-username`         | Copy username                                    |
 | `keepassxc-copy-totp`             | Copy current TOTP (auto-cleared)                 |
+| `keepassxc-copy-url`              | Copy an entry's URL (searches title + URL)       |
+| `keepassxc-browse-url`            | Open an entry's URL with `browse-url`            |
 | `keepassxc-get-login`             | Select entry; copies username + password         |
 | `keepassxc-create-login`          | Create a new entry (offers generated password)   |
 | `keepassxc-generate-password`     | Generate a password with the KeePassXC generator |
@@ -115,6 +119,11 @@ association dialog on first use.
 | `keepassxc-cli-diceware`          | Generate a diceware passphrase (`keepassxc-cli`) |
 | `keepassxc-cli-estimate-password` | Estimate password entropy (`keepassxc-cli`)      |
 | `keepassxc-associate`             | (Re-)associate Emacs with KeePassXC              |
+
+`keepassxc-copy-url`, `keepassxc-browse-url` and
+`keepassxc-get-database-entries` list all entries of the database,
+which requires "Allow limited access to all entries" to be enabled in
+the KeePassXC browser settings.
 
 Programmatic API: `keepassxc-get-logins`, `keepassxc-set-login`,
 `keepassxc-get-totp`, `keepassxc-get-database-groups`,

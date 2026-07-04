@@ -319,6 +319,87 @@ Accepting it would bypass the crypto_box authentication."
                                   mock "inner:request-autotype")))
                    "example.com"))))
 
+(ert-deftest keepassxc-tests-get-database-entries ()
+  "get-database-entries returns title/uuid/url shaped entries."
+  (keepassxc-tests--with-mock nil
+    (let* ((entries (keepassxc-get-database-entries))
+           (entry (seq-find (lambda (e) (equal (gethash "uuid" e) "uuid-3"))
+                            entries)))
+      (should (= (length entries) 5))
+      (should (equal (gethash "title" entry) "Mail"))
+      (should (equal (gethash "url" entry) "imaps://mail.example.com")))))
+
+(ert-deftest keepassxc-tests-copy-url ()
+  "copy-url copies the selected URL; candidates are searchable by URL."
+  (keepassxc-tests--with-mock nil
+    (let ((kill-ring nil)
+          (kill-ring-yank-pointer nil)
+          (interprogram-cut-function nil)
+          (interprogram-paste-function nil)
+          (keepassxc--clear-timer nil)
+          (keepassxc--pending-secret nil))
+      (cl-letf (((symbol-function 'completing-read)
+                 (lambda (_prompt table &rest _)
+                   (let ((labels (all-completions "" table)))
+                     (should (= (length labels) 5))
+                     ;; The URL is part of the label, so completion
+                     ;; styles can match against it.
+                     (or (seq-find (lambda (label)
+                                     (string-search
+                                      "imaps://mail.example.com" label))
+                                   labels)
+                         (ert-fail "No label contains the entry URL"))))))
+        (should (equal (keepassxc-copy-url) "imaps://mail.example.com")))
+      (should (equal (current-kill 0 t) "imaps://mail.example.com"))
+      ;; A URL is not a secret: no auto-clear timer.
+      (should-not keepassxc--clear-timer))))
+
+(ert-deftest keepassxc-tests-browse-url ()
+  "browse-url opens the selected entry's URL."
+  (keepassxc-tests--with-mock nil
+    (let (browsed)
+      (cl-letf (((symbol-function 'completing-read)
+                 (lambda (_prompt table &rest _)
+                   (seq-find (lambda (label)
+                               (string-search "imaps://mail.example.com"
+                                              label))
+                             (all-completions "" table))))
+                ((symbol-function 'browse-url)
+                 (lambda (url &rest _) (setq browsed url))))
+        (keepassxc-browse-url))
+      (should (equal browsed "imaps://mail.example.com")))))
+
+(ert-deftest keepassxc-tests-copy-url-single-entry-no-prompt ()
+  "With a single database entry there is no completion prompt."
+  (keepassxc-tests--with-mock
+      (list :entries '(("https://one.example.com"
+                        . ((:login "a" :password "b" :name "One"
+                            :uuid "u-1" :group "Web")))))
+    (let ((kill-ring nil)
+          (kill-ring-yank-pointer nil)
+          (interprogram-cut-function nil)
+          (interprogram-paste-function nil))
+      (cl-letf (((symbol-function 'completing-read)
+                 (lambda (&rest _) (ert-fail "Prompted for a single entry"))))
+        (should (equal (keepassxc-copy-url) "https://one.example.com"))))))
+
+(ert-deftest keepassxc-tests-copy-url-no-url ()
+  "An entry without URL signals a `user-error'."
+  (keepassxc-tests--with-mock
+      (list :entries '((""
+                        . ((:login "a" :password "b" :name "NoUrl"
+                            :uuid "u-1" :group "Web")))))
+    (should-error (keepassxc-copy-url) :type 'user-error)))
+
+(ert-deftest keepassxc-tests-read-database-entry-denied-hint ()
+  "A denied get-database-entries request hints at the KeePassXC setting."
+  (cl-letf (((symbol-function 'keepassxc-get-database-entries)
+             (lambda () (signal 'keepassxc-denied '("denied")))))
+    (let ((err (should-error (keepassxc--read-database-entry)
+                             :type 'user-error)))
+      (should (string-match-p "Allow limited access to all entries"
+                              (cadr err))))))
+
 (ert-deftest keepassxc-tests-lock-database ()
   "lock-database locks the mock database."
   (keepassxc-tests--with-mock nil

@@ -883,6 +883,50 @@ entry hash-table; don't prompt when only one entry matches."
                         nil t)))
           (cdr (assoc choice candidates)))))))
 
+(defun keepassxc--database-entry-candidates (entries)
+  "Return an alist of (LABEL . ENTRY) with unique labels for ENTRIES.
+ENTRIES come from `keepassxc-get-database-entries'.  The entry
+URL is part of the label, so completion matches it."
+  (let (result)
+    (dolist (entry entries)
+      (let* ((title (or (gethash "title" entry) "?"))
+             (url (gethash "url" entry))
+             (base (if (and url (not (string-empty-p url)))
+                       (format "%s — %s" title
+                               (propertize url 'face 'completions-annotations))
+                     title))
+             (label base)
+             (n 2))
+        (while (assoc label result)
+          (setq label (format "%s <%d>" base n)
+                n (1+ n)))
+        (push (cons label entry) result)))
+    (nreverse result)))
+
+(defun keepassxc--read-database-entry (&optional prompt)
+  "Select an entry of the open KeePassXC database with completion.
+Completion matches the entry title and URL.  PROMPT overrides the
+default minibuffer prompt.  Return the entry hash-table with keys
+\"title\", \"uuid\" and \"url\"; don't prompt when the database
+has only one entry.  Requires \"Allow limited access to all
+entries\" to be enabled in the KeePassXC browser settings."
+  (let ((entries (condition-case nil
+                     (keepassxc-get-database-entries)
+                   (keepassxc-denied
+                    (user-error
+                     (concat "KeePassXC denied listing entries; enable"
+                             " \"Allow limited access to all entries\""
+                             " in the browser settings"))))))
+    (cond
+     ((null entries) (user-error "No entries in the KeePassXC database"))
+     ((null (cdr entries)) (car entries))
+     (t (let* ((candidates (keepassxc--database-entry-candidates entries))
+               (choice (completing-read
+                        (or prompt "KeePassXC entry: ")
+                        (keepassxc--completion-table candidates)
+                        nil t)))
+          (cdr (assoc choice candidates)))))))
+
 (defvar keepassxc--clear-timer nil
   "Timer clearing the last copied secret from the `kill-ring'.")
 
@@ -976,6 +1020,35 @@ The TOTP is cleared after `keepassxc-password-timeout' seconds."
                  (keepassxc-get-totp (gethash "uuid" entry)))))
     (keepassxc--kill-secret totp
                             (format "TOTP for %S" (gethash "name" entry)))))
+
+(defun keepassxc--entry-url (entry)
+  "Return the URL of the database ENTRY, or signal a `user-error'."
+  (let ((url (gethash "url" entry)))
+    (if (and url (not (string-empty-p url)))
+        url
+      (user-error "Entry %S has no URL" (gethash "title" entry)))))
+
+;;;###autoload
+(defun keepassxc-copy-url ()
+  "Copy the URL of a KeePassXC entry to the `kill-ring'.
+The entry is selected from all database entries; completion
+matches the entry title and URL."
+  (interactive)
+  (let* ((entry (keepassxc--read-database-entry "Copy URL of entry: "))
+         (url (keepassxc--entry-url entry)))
+    (kill-new url)
+    (message "URL for %S copied to kill-ring" (gethash "title" entry))
+    url))
+
+;;;###autoload
+(defun keepassxc-browse-url ()
+  "Open the URL of a KeePassXC entry with `browse-url'.
+The entry is selected from all database entries; completion
+matches the entry title and URL."
+  (interactive)
+  (browse-url
+   (keepassxc--entry-url
+    (keepassxc--read-database-entry "Browse URL of entry: "))))
 
 ;;;###autoload
 (defun keepassxc-create-login (url login password)
@@ -1221,6 +1294,8 @@ is running)."
     ("p" "Copy password" keepassxc-copy-password)
     ("u" "Copy username" keepassxc-copy-username)
     ("t" "Copy TOTP" keepassxc-copy-totp)
+    ("U" "Copy URL" keepassxc-copy-url)
+    ("b" "Browse URL" keepassxc-browse-url)
     ("y" "Auto-type" keepassxc-request-autotype)
     ("n" "New entry" keepassxc-create-login)
     ("D" "Delete entry" keepassxc-delete-entry)]

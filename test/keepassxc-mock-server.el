@@ -261,11 +261,17 @@ protocol violation the client must reject)."
          (funcall respond `(:name ,(gethash "groupName" inner)
                             :uuid "mock-group-uuid")))
         ("get-database-entries"
-         (funcall respond `(:entries ,(vconcat
-                                       (apply #'append
-                                              (mapcar #'cdr
-                                                      (keepassxc-mock-entries
-                                                       mock)))))))
+         ;; Like the real server: only title, uuid and url per entry.
+         (funcall respond
+                  `(:entries
+                    ,(vconcat
+                      (mapcan (lambda (site)
+                                (mapcar (lambda (entry)
+                                          (list :title (plist-get entry :name)
+                                                :uuid (plist-get entry :uuid)
+                                                :url (car site)))
+                                        (cdr site)))
+                              (keepassxc-mock-entries mock))))))
         ("delete-entry" (funcall respond nil))
         ("request-autotype" (funcall respond nil))
         ("lock-database"
