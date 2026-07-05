@@ -17,7 +17,7 @@ All traffic is encrypted with libsodium `crypto_box`
 - **Entry access**: `keepassxc-copy-password`, `keepassxc-copy-username`,
   `keepassxc-copy-totp`, `keepassxc-get-login`, `keepassxc-copy-url`
   and `keepassxc-browse-url` all pick an entry from the whole
-  database — completion matches title *and* URL, narrowing live as
+  database. Completion matches title *and* URL, narrowing live as
   you type (vertico/orderless style).
   Copied secrets are cleared from the kill-ring after
   `keepassxc-password-timeout` (45s default), like password-store.
@@ -38,7 +38,7 @@ All traffic is encrypted with libsodium `crypto_box`
   quitting and non-interactive unlock need D-Bus (Linux).
 - **Offline generators**: `keepassxc-cli-generate-password`,
   `keepassxc-cli-diceware` and `keepassxc-cli-estimate-password` run
-  `keepassxc-cli` — no unlocked database, no running KeePassXC needed.
+  `keepassxc-cli`. No unlocked database, no running KeePassXC needed.
 
 ## Requirements
 
@@ -90,8 +90,8 @@ Or from local checkouts (run `make` in the sodium.el checkout once):
 ## Setup
 
 1. Enable Browser Integration in KeePassXC (see above).
-2. `M-x keepassxc-associate` — KeePassXC pops up a dialog; confirm and
-   give the association a name (e.g. "emacs").
+2. `M-x keepassxc-associate`. KeePassXC pops up a dialog;
+   confirm and give the association a name (e.g. "emacs").
 3. Set `plstore-encrypt-to` to your GPG key id (or email) so the
    association is stored GPG-encrypted:
 
@@ -133,7 +133,7 @@ All entry commands select from the full database with incremental
 completion over title and URL, which requires "Allow limited access
 to all entries" to be enabled in the KeePassXC browser settings and
 KeePassXC ≥ 2.8 (the `get-database-entries` request; not yet in a
-released version — use a [snapshot build](https://snapshot.keepassxc.org/)).
+released version; use a [snapshot build](https://snapshot.keepassxc.org/)).
 On older KeePassXC the commands automatically fall back to prompting
 for a URL and completing among its entries.
 The browser protocol only provides passwords by URL, so entries
@@ -158,14 +158,14 @@ service name) picks the URL scheme via
 `keepassxc-default-url-schema`:
 
 ```elisp
-;; ERC — matches a KeePassXC entry with URL ircs://irc.libera.chat
+;; ERC - matches a KeePassXC entry with URL ircs://irc.libera.chat
 (auth-source-search :host "irc.libera.chat" :port "6697")
 
-;; smtpmail — entry URL smtp://mail.example.com
+;; smtpmail - entry URL smtp://mail.example.com
 (setq smtpmail-smtp-server "mail.example.com"
       smtpmail-smtp-service 587)
 
-;; Forge/ghub — entry URL https://api.github.com, username "you^forge"
+;; Forge/ghub - entry URL https://api.github.com, username "you^forge"
 (auth-source-search :host "api.github.com" :user "you^forge")
 ```
 
@@ -176,10 +176,9 @@ Packages that save credentials (`:create t`) work too: the new entry
 is written to KeePassXC when the caller invokes the returned
 `:save-function`.  By default it lands in KeePassXC's
 "KeePassXC-Browser Passwords" group; set `keepassxc-auth-source-group`
-(e.g. `"emacs"`) to file created entries into that group instead —
-slashes nest (`"emacs/mail"`), like the browser extension's group
-setting, and a missing group is created after a KeePassXC
-confirmation dialog.
+(e.g. `"emacs"`) to file created entries into that group instead.
+Slashes nest (`"emacs/mail"`), like the browser extension's group setting,
+and a missing group is created after a KeePassXC confirmation dialog.
 
 When the database is locked, searches return nil (packages then
 usually prompt); unlocking KeePassXC automatically flushes
@@ -195,7 +194,7 @@ auth-source's negative cache via the `database-unlocked` signal.
 - KeePassXC shows its own confirmation dialogs for association and
   (depending on your KeePassXC settings) for entry access.
 - On Linux you may prefer Emacs's built-in Secret Service integration
-  (`secrets.el`) — KeePassXC implements `org.freedesktop.secrets`.
+  (`secrets.el`). KeePassXC implements `org.freedesktop.secrets`.
   This package's socket protocol works on macOS too and offers more
   (TOTP, generator, groups, auto-type).
 
@@ -217,10 +216,10 @@ from the transient menu without a D-Bus session.
 
 `keepassxc-cli-generate-password`, `keepassxc-cli-diceware` and
 `keepassxc-cli-estimate-password` run the `keepassxc-cli` program
-(`keepassxc-cli-command`) — they need no running KeePassXC and no
-database.  Passwords travel over stdin only, never on the command
-line.  On macOS the binaries are picked up from the application
-bundle automatically when not on `PATH`.
+(`keepassxc-cli-command`). They need no running KeePassXC and no database.
+Passwords travel over stdin only, never on the command line.
+On macOS the binaries are picked up from the application bundle
+automatically when not on `PATH`.
 
 ## Development
 
@@ -232,13 +231,7 @@ make lint       # package-lint
 
 The test suite spins up a mock KeePassXC server (real sodium crypto,
 fault injection for chunked/coalesced messages, error codes, corrupt
-nonces) on a temporary unix socket — no KeePassXC needed.
-
-## Future work
-
-- Passkeys (`passkeys-get`/`passkeys-register`)
-- Async (callback/promise) request API
-- Entry browser buffer (tabulated-list)
+nonces) on a temporary unix socket. No KeePassXC needed.
 
 ## License
 

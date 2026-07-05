@@ -3,7 +3,7 @@
 All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [Unreleased]
+## [0.3] - 2026-07-05
 
 ### Added
 - New defcustom `keepassxc-auth-source-group`: KeePassXC group
@@ -34,14 +34,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 - Restarting KeePassXC no longer leaves Emacs with a dead connection
-  that times out on every request until `keepassxc-disconnect`: a
-  connection whose socket file changed (KeePassXC recreates it on
+  that times out on every request until `keepassxc-disconnect`:
+  a connection whose socket file changed (KeePassXC recreates it on
   restart) is detected as stale and reopened automatically.
 - `keepassxc-generate-password`, `keepassxc-cli-generate-password`,
   `keepassxc-cli-diceware` and `keepassxc-cli-estimate-password` did
   not copy (or display) their result when invoked from the
   `keepassxc` transient menu: transient advises suffix commands,
   which makes `called-interactively-p` return nil.
+- Stale-reply tracking is reset on reconnect.  A leftover entry from
+  a request that timed out on a previous connection could swallow an
+  error reply on the new connection, turning e.g. an immediate
+  "database locked" error into a timeout.
+- `keepassxc-get-login` no longer claims the username was copied for
+  entries without one.
 
 ## [0.2] - 2026-07-04
 

@@ -100,7 +100,8 @@ When nil, KeePassXC puts new entries into its default browser group."
 A non-numeric PORT (service name like \"imaps\") is used as URL
 scheme directly; a numeric PORT is translated with
 `keepassxc-auth-source-port-scheme-alist'.  The plain HOST with
-`keepassxc-default-url-schema' is always included as fallback."
+`keepassxc-default-url-schema' is always included as fallback.
+A HOST that already contains a URL scheme is used as-is."
   (let* ((port (cond ((null port) nil)
                      ((symbolp port) (symbol-name port))
                      (t port)))
@@ -112,11 +113,11 @@ scheme directly; a numeric PORT is translated with
                                          (string-to-number port)
                                        port)
                                      keepassxc-auth-source-port-scheme-alist)))))
-    (delete-dups
-     (delq nil
-           (list (when scheme (format "%s://%s" scheme host))
-                 (if (string-match-p "://" host)
-                     host
+    (if (string-match-p "://" host)
+        (list host)
+      (delete-dups
+       (delq nil
+             (list (when scheme (format "%s://%s" scheme host))
                    (concat keepassxc-default-url-schema host)))))))
 
 (defun keepassxc-auth-source--create (spec)

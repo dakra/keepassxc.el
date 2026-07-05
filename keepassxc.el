@@ -5,7 +5,7 @@
 ;; Author: Daniel Kraus <daniel@kraus.my>
 ;; URL: https://github.com/dakra/keepassxc.el
 ;; Keywords: tools processes password keepass keepassxc convenience
-;; Version: 0.2
+;; Version: 0.3
 ;; Package-Requires: ((emacs "28.1") (sodium "0.2"))
 
 ;; This file is not part of GNU Emacs.
@@ -322,7 +322,10 @@ native-messaging proxy, not to the direct socket).")
         (keepassxc--session-socket-identity session) nil
         (keepassxc--session-buffer session) nil
         (keepassxc--session-server-key session) nil
-        (keepassxc--session-db-hash session) nil))
+        (keepassxc--session-db-hash session) nil
+        ;; Stale-reply attribution assumes replies arrive in request
+        ;; order, which only holds within one connection.
+        (keepassxc--session-stale-nonces session) nil))
 
 (defun keepassxc--sentinel (proc _event)
   "Clean up after PROC's connection state changed."
@@ -859,15 +862,12 @@ The URL at point (if any) is used as default."
         url
       (concat keepassxc-default-url-schema url))))
 
-(defun keepassxc--entry-candidates (entries)
-  "Return an alist of (LABEL . ENTRY) with unique labels for ENTRIES."
+(defun keepassxc--candidates (entries label-fn)
+  "Return an alist of (LABEL . ENTRY) with unique labels for ENTRIES.
+LABEL-FN returns the label for one entry; duplicates get a \" <N>\" suffix."
   (let (result)
     (dolist (entry entries)
-      (let* ((name (or (gethash "name" entry) "?"))
-             (login (gethash "login" entry))
-             (base (if (and login (not (string-empty-p login)))
-                       (format "%s (%s)" name login)
-                     name))
+      (let* ((base (funcall label-fn entry))
              (label base)
              (n 2))
         (while (assoc label result)
@@ -875,6 +875,14 @@ The URL at point (if any) is used as default."
                 n (1+ n)))
         (push (cons label entry) result)))
     (nreverse result)))
+
+(defun keepassxc--entry-label (entry)
+  "Return the completion label for ENTRY from `keepassxc-get-logins'."
+  (let ((name (or (gethash "name" entry) "?"))
+        (login (gethash "login" entry)))
+    (if (and login (not (string-empty-p login)))
+        (format "%s (%s)" name login)
+      name)))
 
 (defun keepassxc--completion-table (candidates)
   "Return a completion table over CANDIDATES, an alist (LABEL . ENTRY)."
@@ -901,32 +909,24 @@ entry hash-table; don't prompt when only one entry matches."
     (cond
      ((null entries) (user-error "No KeePassXC entries for %s" url))
      ((null (cdr entries)) (car entries))
-     (t (let* ((candidates (keepassxc--entry-candidates entries))
+     (t (let* ((candidates (keepassxc--candidates
+                            entries #'keepassxc--entry-label))
                (choice (completing-read
                         (or prompt (format "Entry for %s: " url))
                         (keepassxc--completion-table candidates)
                         nil t)))
           (cdr (assoc choice candidates)))))))
 
-(defun keepassxc--database-entry-candidates (entries)
-  "Return an alist of (LABEL . ENTRY) with unique labels for ENTRIES.
-ENTRIES come from `keepassxc-get-database-entries'.  The entry
+(defun keepassxc--database-entry-label (entry)
+  "Return the completion label for a database ENTRY.
+ENTRY comes from `keepassxc-get-database-entries'.  The entry
 URL is part of the label, so completion matches it."
-  (let (result)
-    (dolist (entry entries)
-      (let* ((title (or (gethash "title" entry) "?"))
-             (url (gethash "url" entry))
-             (base (if (and url (not (string-empty-p url)))
-                       (format "%s — %s" title
-                               (propertize url 'face 'completions-annotations))
-                     title))
-             (label base)
-             (n 2))
-        (while (assoc label result)
-          (setq label (format "%s <%d>" base n)
-                n (1+ n)))
-        (push (cons label entry) result)))
-    (nreverse result)))
+  (let ((title (or (gethash "title" entry) "?"))
+        (url (gethash "url" entry)))
+    (if (and url (not (string-empty-p url)))
+        (format "%s — %s" title
+                (propertize url 'face 'completions-annotations))
+      title)))
 
 (defun keepassxc--read-database-entry (&optional prompt)
   "Select an entry of the open KeePassXC database with completion.
@@ -945,7 +945,8 @@ entries\" to be enabled in the KeePassXC browser settings."
     (cond
      ((null entries) (user-error "No entries in the KeePassXC database"))
      ((null (cdr entries)) (car entries))
-     (t (let* ((candidates (keepassxc--database-entry-candidates entries))
+     (t (let* ((candidates (keepassxc--candidates
+                            entries #'keepassxc--database-entry-label))
                (choice (completing-read
                         (or prompt "KeePassXC entry: ")
                         (keepassxc--completion-table candidates)
@@ -972,7 +973,6 @@ password lookup by UUID, so entries without a URL signal a
                     (keepassxc-no-logins nil))))
       (or (seq-find (lambda (login) (equal (gethash "uuid" login) uuid))
                     logins)
-          (and (null (cdr logins)) (car logins))
           (user-error "KeePassXC returned no login for entry %S (%s)"
                       title url)))))
 
@@ -1036,19 +1036,21 @@ immediately."
   "Select a KeePassXC entry and return it as a hash-table.
 The entry is selected from all database entries; completion
 matches the entry title and URL.  With COPY non-nil
-\(interactively, always), copy the username and then the
-password to the `kill-ring', so the password is the most recent
-kill; the password is cleared after
+\(interactively, always), copy the username (when the entry has
+one) and then the password to the `kill-ring', so the password
+is the most recent kill; the password is cleared after
 `keepassxc-password-timeout' seconds."
   (interactive (list t))
   (let ((entry (keepassxc--select-login)))
     (when copy
       (let ((login (gethash "login" entry)))
         (when (and login (not (string-empty-p login)))
+          ;; The username is not treated as a secret: it stays in the
+          ;; kill-ring when the password is cleared.
           (kill-new login)))
-      (keepassxc--kill-secret
-       (gethash "password" entry)
-       (format "Username and password for %S -- password" (gethash "name" entry))))
+      (keepassxc--kill-secret (gethash "password" entry)
+                              (format "Password for %S"
+                                      (gethash "name" entry))))
     entry))
 
 ;;;###autoload

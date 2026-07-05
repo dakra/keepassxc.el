@@ -119,7 +119,11 @@ plstore persistence is replaced with an in-memory alist."
   (should (equal (keepassxc-auth-source--urls "irc.libera.chat" "6697")
                  '("ircs://irc.libera.chat" "https://irc.libera.chat")))
   (should (equal (keepassxc-auth-source--urls "imap.example.com" "imaps")
-                 '("imaps://imap.example.com" "https://imap.example.com"))))
+                 '("imaps://imap.example.com" "https://imap.example.com")))
+  ;; A host that already contains a scheme is used as-is, even when
+  ;; the port would select a different scheme.
+  (should (equal (keepassxc-auth-source--urls "https://example.com" 993)
+                 '("https://example.com"))))
 
 
 ;;; Transport and association
@@ -265,6 +269,29 @@ Accepting it would bypass the crypto_box authentication."
     (keepassxc-mock-flush mock)
     (accept-process-output nil 0.2)
     (should (= (length (keepassxc-get-logins "https://example.com")) 2))))
+
+(ert-deftest keepassxc-tests-stale-tracking-reset-on-reconnect ()
+  "Stale-reply tracking from a dead connection must not drop new errors.
+Late nonceless error replies are attributed to abandoned requests
+by action name, which assumes replies arrive in request order —
+that only holds within one connection."
+  (keepassxc-tests--with-mock nil
+    (should (equal (keepassxc-get-database-hash) "MOCKHASH"))
+    ;; Time out a request; its nonce and action are recorded as stale.
+    (setf (keepassxc-mock-hold mock) t)
+    (let ((keepassxc-timeout 0.3))
+      (should-error (keepassxc-get-database-hash)
+                    :type 'keepassxc-connection-error))
+    (setf (keepassxc-mock-hold mock) nil
+          (keepassxc-mock-held mock) nil)
+    (keepassxc-disconnect)
+    ;; On the new connection, an error reply for the same action must
+    ;; reach the caller instead of being dropped as stale.
+    (should (equal (keepassxc-get-database-hash) "MOCKHASH"))
+    (setf (keepassxc-mock-fail-with mock) 1)
+    (let ((keepassxc-timeout 0.3))
+      (should-error (keepassxc-get-database-hash)
+                    :type 'keepassxc-database-locked))))
 
 (ert-deftest keepassxc-tests-locked-signal-clears-db-hash ()
   "An unsolicited database-locked signal invalidates the cached hash."
@@ -448,6 +475,19 @@ advised, as transient does with its suffix commands (this breaks
            (login (keepassxc--resolve-database-entry entry)))
       (should (equal (gethash "login" login) "bob"))
       (should (equal (gethash "password" login) "hunter2")))))
+
+(ert-deftest keepassxc-tests-resolve-database-entry-uuid-mismatch ()
+  "No login with the entry's uuid signals instead of guessing.
+The URL's only login could be a different entry sharing the URL
+\(e.g. when the selected one is hidden from browser integration);
+returning it would silently yield the wrong password."
+  (keepassxc-tests--with-mock nil
+    (let ((entry (make-hash-table :test #'equal)))
+      (puthash "title" "Mail" entry)
+      (puthash "uuid" "other-uuid" entry)
+      (puthash "url" "imaps://mail.example.com" entry)
+      (should-error (keepassxc--resolve-database-entry entry)
+                    :type 'user-error))))
 
 (ert-deftest keepassxc-tests-resolve-database-entry-no-url ()
   "resolve-database-entry on an entry without URL signals a `user-error'."

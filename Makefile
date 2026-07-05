@@ -1,5 +1,5 @@
 EMACS ?= emacs
-SODIUM_DIR ?= ../sodium.el
+SODIUM_DIR ?= $(firstword $(wildcard ../sodium ../sodium.el) ../sodium.el)
 LOAD_PATH = -L . -L $(SODIUM_DIR) -L test
 ELS = keepassxc.el keepassxc-auth-source.el
 
