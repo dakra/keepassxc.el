@@ -667,6 +667,7 @@ KeePassXC before 2.8 answers get-database-entries with
   (keepassxc-tests--with-mock nil
     (let* ((auth-sources '(keepassxc))
            (auth-source-do-cache nil)
+           (keepassxc-auth-source-group nil)
            (results (cl-letf (((symbol-function 'read-passwd)
                                (lambda (&rest _) "new-pass")))
                       (auth-source-search :host "new.example.com"
@@ -680,7 +681,34 @@ KeePassXC before 2.8 answers get-database-entries with
         (should inner)
         (should (equal (gethash "url" inner) "https://new.example.com"))
         (should (equal (gethash "login" inner) "carol"))
-        (should (equal (gethash "password" inner) "new-pass"))))))
+        (should (equal (gethash "password" inner) "new-pass"))
+        ;; With `keepassxc-auth-source-group' nil, no group is sent and
+        ;; KeePassXC uses its default browser group.
+        (should-not (gethash "group" inner))
+        (should-not (gethash "groupUuid" inner))))))
+
+(ert-deftest keepassxc-tests-auth-source-create-in-group ()
+  "auth-source :create files the entry into `keepassxc-auth-source-group'."
+  (keepassxc-tests--with-mock nil
+    (let* ((auth-sources '(keepassxc))
+           (auth-source-do-cache nil)
+           (keepassxc-auth-source-group "emacs/mail")
+           (results (cl-letf (((symbol-function 'read-passwd)
+                               (lambda (&rest _) "new-pass")))
+                      (auth-source-search :host "new.example.com"
+                                          :user "carol" :create t)))
+           (result (car results)))
+      (should result)
+      (funcall (plist-get result :save-function))
+      (let ((group-req (car (keepassxc-mock-requests-for
+                             mock "inner:create-new-group"))))
+        (should group-req)
+        (should (equal (gethash "groupName" group-req) "emacs/mail")))
+      (let ((inner (car (keepassxc-mock-requests-for mock "inner:set-login"))))
+        (should inner)
+        (should (equal (gethash "url" inner) "https://new.example.com"))
+        (should (equal (gethash "group" inner) "emacs/mail"))
+        (should (equal (gethash "groupUuid" inner) "mock-group-uuid"))))))
 
 
 ;;; keepassxc-cli and application control

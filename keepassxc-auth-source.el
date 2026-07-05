@@ -38,6 +38,7 @@
 ;; selects the URL scheme, see `keepassxc-auth-source-port-scheme-alist'.
 ;; With :create t a missing entry is created in KeePassXC when the
 ;; caller invokes the returned :save-function.
+;; Set `keepassxc-auth-source-group' to save such entries into a specific group.
 
 ;;; Code:
 
@@ -84,6 +85,16 @@
   :type '(alist :key-type integer :value-type string)
   :group 'keepassxc)
 
+(defcustom keepassxc-auth-source-group "Emacs/auth-source"
+  "KeePassXC group for entries created via auth-source.
+A slash-separated path like \"emacs/mail\" (nested groups), as in
+the browser extension's group setting.  A missing group is
+created after a KeePassXC confirmation dialog.
+When nil, KeePassXC puts new entries into its default browser group."
+  :type '(choice (const :tag "KeePassXC default group" nil)
+                 (string :tag "Group path"))
+  :group 'keepassxc)
+
 (defun keepassxc-auth-source--urls (host port)
   "Return candidate KeePassXC URLs for HOST and PORT.
 A non-numeric PORT (service name like \"imaps\") is used as URL
@@ -128,7 +139,13 @@ its :save-function, as per the auth-source create protocol."
        :user ,user
        :secret ,(lambda () secret)
        :save-function ,(lambda ()
-                         (keepassxc-set-login url user secret)
+                         (if-let* ((group keepassxc-auth-source-group)
+                                   (uuid (gethash
+                                          "uuid"
+                                          (keepassxc-create-new-group group))))
+                             (keepassxc-set-login url user secret
+                                                  nil group uuid)
+                           (keepassxc-set-login url user secret))
                          (message "Saved %s@%s in KeePassXC" user url))))))
 
 (cl-defun keepassxc-auth-source-search (&rest spec

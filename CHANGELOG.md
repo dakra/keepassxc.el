@@ -5,6 +5,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+- New defcustom `keepassxc-auth-source-group`: KeePassXC group
+  (slash-separated path, e.g. `"emacs/mail"`) for entries created via
+  the auth-source backend.  A missing group is created after a
+  KeePassXC confirmation dialog; when nil, entries go into
+  KeePassXC's default browser group.
+
 ### Changed
 - **Breaking**: `keepassxc-copy-password`, `keepassxc-copy-username`,
   `keepassxc-copy-totp`, `keepassxc-get-login` and (interactively)

@@ -174,7 +174,12 @@ The entry's *URL* must match the looked-up URL and the entry's
 
 Packages that save credentials (`:create t`) work too: the new entry
 is written to KeePassXC when the caller invokes the returned
-`:save-function`.
+`:save-function`.  By default it lands in KeePassXC's
+"KeePassXC-Browser Passwords" group; set `keepassxc-auth-source-group`
+(e.g. `"emacs"`) to file created entries into that group instead —
+slashes nest (`"emacs/mail"`), like the browser extension's group
+setting, and a missing group is created after a KeePassXC
+confirmation dialog.
 
 When the database is locked, searches return nil (packages then
 usually prompt); unlocking KeePassXC automatically flushes
