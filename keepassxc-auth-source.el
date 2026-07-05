@@ -36,6 +36,10 @@
 ;;
 ;; Hosts are looked up as URLs; the port (number or service name)
 ;; selects the URL scheme, see `keepassxc-auth-source-port-scheme-alist'.
+;; Without a scheme-mapped port, entries use the dedicated scheme
+;; `keepassxc-auth-source-scheme' (auth-source://host, or
+;; auth-source://host:port for unmapped numeric ports), which the
+;; KeePassXC browser extension does not offer on websites.
 ;; With :create t a missing entry is created in KeePassXC when the
 ;; caller invokes the returned :save-function.
 ;; Set `keepassxc-auth-source-group' to save such entries into a specific group.
@@ -95,29 +99,44 @@ When nil, KeePassXC puts new entries into its default browser group."
                  (string :tag "Group path"))
   :group 'keepassxc)
 
+(defcustom keepassxc-auth-source-scheme "auth-source"
+  "URL scheme for KeePassXC entries only the auth-source backend matches.
+Entries imported or created without a port-derived URL scheme use
+this scheme, e.g. \"auth-source://api.openai.com\".  The KeePassXC
+browser extension does not offer such entries on websites (with
+its default \"Match URL scheme\" setting); lookups through this
+backend always try this scheme as fallback."
+  :type 'string
+  :group 'keepassxc)
+
 (defun keepassxc-auth-source--urls (host port)
-  "Return candidate KeePassXC URLs for HOST and PORT.
+  "Return candidate KeePassXC URLs for HOST and PORT, best match first.
 A non-numeric PORT (service name like \"imaps\") is used as URL
 scheme directly; a numeric PORT is translated with
-`keepassxc-auth-source-port-scheme-alist'.  The plain HOST with
-`keepassxc-default-url-schema' is always included as fallback.
+`keepassxc-auth-source-port-scheme-alist'.  A numeric PORT
+without scheme mapping keeps the port, as
+`keepassxc-auth-source-scheme'://HOST:PORT.  HOST with
+`keepassxc-auth-source-scheme' and with
+`keepassxc-default-url-schema' are always included as fallbacks.
 A HOST that already contains a URL scheme is used as-is."
   (let* ((port (cond ((null port) nil)
                      ((symbolp port) (symbol-name port))
+                     ((numberp port) (number-to-string port))
                      (t port)))
+         (numeric (and port (string-match-p "\\`[0-9]+\\'" port)))
          (scheme (cond ((null port) nil)
-                       ((and (stringp port)
-                             (not (string-match-p "\\`[0-9]+\\'" port)))
-                        port)
-                       (t (alist-get (if (stringp port)
-                                         (string-to-number port)
-                                       port)
+                       ((not numeric) port)
+                       (t (alist-get (string-to-number port)
                                      keepassxc-auth-source-port-scheme-alist)))))
     (if (string-match-p "://" host)
         (list host)
       (delete-dups
        (delq nil
              (list (when scheme (format "%s://%s" scheme host))
+                   (when (and numeric (not scheme))
+                     (format "%s://%s:%s"
+                             keepassxc-auth-source-scheme host port))
+                   (format "%s://%s" keepassxc-auth-source-scheme host)
                    (concat keepassxc-default-url-schema host)))))))
 
 (defun keepassxc-auth-source--create (spec)
@@ -148,6 +167,58 @@ its :save-function, as per the auth-source create protocol."
                                                   nil group uuid)
                            (keepassxc-set-login url user secret))
                          (message "Saved %s@%s in KeePassXC" user url))))))
+
+;;;###autoload
+(defun keepassxc-auth-source-import ()
+  "Import the entries of all other auth-sources into KeePassXC.
+Collect every entry with a host and a secret from the backends in
+`auth-sources' except the KeePassXC backend itself (e.g. ~/.authinfo.gpg)
+and save it in KeePassXC, in `keepassxc-auth-source-group'.
+Hosts are turned into URLs as in lookups, see `keepassxc-auth-source--urls'.
+Entries whose URL already has a login with the same username in KeePassXC are
+skipped, so the import can be re-run safely."
+  (interactive)
+  (let* ((auth-sources (remq 'keepassxc auth-sources))
+         (auth-source-do-cache nil)
+         (entries (seq-filter (lambda (entry)
+                                (and (stringp (plist-get entry :host))
+                                     (plist-get entry :secret)))
+                              (auth-source-search :max most-positive-fixnum)))
+         (imported 0)
+         (skipped 0)
+         (seen nil))
+    (unless entries
+      (user-error "No auth-source entries to import"))
+    (unless (y-or-n-p (format "Import %d auth-source entries into KeePassXC? "
+                              (length entries)))
+      (user-error "Import aborted"))
+    (let* ((group keepassxc-auth-source-group)
+           (group-uuid (when group
+                         (gethash "uuid" (keepassxc-create-new-group group))))
+           (reporter (make-progress-reporter "Importing into KeePassXC..."
+                                             0 (length entries)))
+           (i 0))
+      (dolist (entry entries)
+        (let* ((user (or (plist-get entry :user) ""))
+               (secret (plist-get entry :secret))
+               (password (if (functionp secret) (funcall secret) secret))
+               (url (car (keepassxc-auth-source--urls
+                          (plist-get entry :host) (plist-get entry :port)))))
+          (if (or (not (stringp password))
+                  (member (cons url user) seen)
+                  (seq-find (lambda (login)
+                              (equal (gethash "login" login) user))
+                            (condition-case nil
+                                (keepassxc-get-logins url)
+                              (keepassxc-no-logins nil))))
+              (cl-incf skipped)
+            (keepassxc-set-login url user password nil group group-uuid)
+            (cl-incf imported))
+          (push (cons url user) seen))
+        (progress-reporter-update reporter (cl-incf i)))
+      (progress-reporter-done reporter))
+    (message "Imported %d auth-source entries into KeePassXC (%d skipped)"
+             imported skipped)))
 
 (cl-defun keepassxc-auth-source-search (&rest spec
                                         &key backend type host user port

@@ -154,8 +154,15 @@ Entries are hash-tables with keys like `"login"`, `"password"`,
 
 Hosts are looked up as URLs in KeePassXC.  The `:port` (number or
 service name) picks the URL scheme via
-`keepassxc-auth-source-port-scheme-alist`, falling back to
-`keepassxc-default-url-schema`:
+`keepassxc-auth-source-port-scheme-alist`; a numeric port without a
+scheme mapping keeps the port (`auth-source://api.example.com:6543`)
+and no port yields `auth-source://api.example.com`.  The
+`auth-source` scheme (`keepassxc-auth-source-scheme`) marks entries
+that only this backend matches — the KeePassXC browser extension does
+not offer them on websites, so e.g. imported API keys never pop up as
+website logins.  Every lookup also tries `auth-source://host` and
+plain `keepassxc-default-url-schema` (https) as fallbacks, so
+browser-created entries are found too:
 
 ```elisp
 ;; ERC - matches a KeePassXC entry with URL ircs://irc.libera.chat
@@ -165,7 +172,8 @@ service name) picks the URL scheme via
 (setq smtpmail-smtp-server "mail.example.com"
       smtpmail-smtp-service 587)
 
-;; Forge/ghub - entry URL https://api.github.com, username "you^forge"
+;; Forge/ghub - entry URL auth-source://api.github.com (or
+;; https://api.github.com), username "you^forge"
 (auth-source-search :host "api.github.com" :user "you^forge")
 ```
 
@@ -179,6 +187,12 @@ is written to KeePassXC when the caller invokes the returned
 (e.g. `"emacs"`) to file created entries into that group instead.
 Slashes nest (`"emacs/mail"`), like the browser extension's group setting,
 and a missing group is created after a KeePassXC confirmation dialog.
+
+To migrate existing credentials, `M-x keepassxc-auth-source-import`
+copies every entry from your other auth-sources (e.g. `~/.authinfo.gpg`)
+into KeePassXC, filed into `keepassxc-auth-source-group`.
+Entries whose URL already has a login with the same username in
+KeePassXC are skipped, so re-running the import is safe.
 
 When the database is locked, searches return nil (packages then
 usually prompt); unlocking KeePassXC automatically flushes

@@ -3,6 +3,20 @@
 All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Added
+- New command `keepassxc-auth-source-import`: import the entries of
+  all other auth-sources (mainly `~/.authinfo.gpg`) into KeePassXC.
+  Entries whose URL already has a login with the same username are
+  skipped, so the import can be re-run safely.
+- Entries without a scheme-mapped port use the dedicated URL scheme
+  `keepassxc-auth-source-scheme` (`auth-source://host`, or
+  `auth-source://host:6543` for numeric ports without scheme mapping),
+  which the KeePassXC browser extension does not offer on websites.
+  Lookups always try this scheme as fallback, in addition to the
+  `keepassxc-default-url-schema` (https) fallback.
+
 ## [0.3] - 2026-07-05
 
 ### Added

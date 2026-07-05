@@ -111,15 +111,30 @@ plstore persistence is replaced with an in-memory alist."
 (ert-deftest keepassxc-tests-auth-source-urls ()
   "Host/port pairs are translated to KeePassXC lookup URLs."
   (should (equal (keepassxc-auth-source--urls "example.com" nil)
-                 '("https://example.com")))
+                 '("auth-source://example.com" "https://example.com")))
   (should (equal (keepassxc-auth-source--urls "example.com" 443)
-                 '("https://example.com")))
+                 '("https://example.com" "auth-source://example.com")))
   (should (equal (keepassxc-auth-source--urls "mail.example.com" 993)
-                 '("imaps://mail.example.com" "https://mail.example.com")))
+                 '("imaps://mail.example.com"
+                   "auth-source://mail.example.com"
+                   "https://mail.example.com")))
   (should (equal (keepassxc-auth-source--urls "irc.libera.chat" "6697")
-                 '("ircs://irc.libera.chat" "https://irc.libera.chat")))
+                 '("ircs://irc.libera.chat"
+                   "auth-source://irc.libera.chat"
+                   "https://irc.libera.chat")))
   (should (equal (keepassxc-auth-source--urls "imap.example.com" "imaps")
-                 '("imaps://imap.example.com" "https://imap.example.com")))
+                 '("imaps://imap.example.com"
+                   "auth-source://imap.example.com"
+                   "https://imap.example.com")))
+  ;; A numeric port without scheme mapping keeps the port.
+  (should (equal (keepassxc-auth-source--urls "api.atomx.local" 6543)
+                 '("auth-source://api.atomx.local:6543"
+                   "auth-source://api.atomx.local"
+                   "https://api.atomx.local")))
+  (should (equal (keepassxc-auth-source--urls "api.atomx.local" "6543")
+                 '("auth-source://api.atomx.local:6543"
+                   "auth-source://api.atomx.local"
+                   "https://api.atomx.local")))
   ;; A host that already contains a scheme is used as-is, even when
   ;; the port would select a different scheme.
   (should (equal (keepassxc-auth-source--urls "https://example.com" 993)
@@ -719,7 +734,7 @@ KeePassXC before 2.8 answers get-database-entries with
       (funcall (plist-get result :save-function))
       (let ((inner (car (keepassxc-mock-requests-for mock "inner:set-login"))))
         (should inner)
-        (should (equal (gethash "url" inner) "https://new.example.com"))
+        (should (equal (gethash "url" inner) "auth-source://new.example.com"))
         (should (equal (gethash "login" inner) "carol"))
         (should (equal (gethash "password" inner) "new-pass"))
         ;; With `keepassxc-auth-source-group' nil, no group is sent and
@@ -746,9 +761,57 @@ KeePassXC before 2.8 answers get-database-entries with
         (should (equal (gethash "groupName" group-req) "emacs/mail")))
       (let ((inner (car (keepassxc-mock-requests-for mock "inner:set-login"))))
         (should inner)
-        (should (equal (gethash "url" inner) "https://new.example.com"))
+        (should (equal (gethash "url" inner) "auth-source://new.example.com"))
         (should (equal (gethash "group" inner) "emacs/mail"))
         (should (equal (gethash "groupUuid" inner) "mock-group-uuid"))))))
+
+(ert-deftest keepassxc-tests-auth-source-import ()
+  "Import saves netrc entries, skipping duplicates and existing logins."
+  (keepassxc-tests--with-mock
+      '(:entries (("auth-source://example.com"
+                   . ((:login "alice" :password "old-pass" :name "Example"
+                       :uuid "uuid-alice" :group "Emacs/auth-source")))))
+    (let* ((netrc (make-temp-file
+                   "keepassxc-tests-authinfo" nil nil
+                   (concat "machine new.example.com login carol"
+                           " password s3cret port imaps\n"
+                           ;; Already in KeePassXC: skipped.
+                           "machine example.com login alice password wrong\n"
+                           ;; Duplicate of the first line: skipped.
+                           "machine new.example.com login carol"
+                           " password s3cret port imaps\n"
+                           ;; Numeric port without scheme mapping.
+                           "machine api.atomx.local login daniel@atomx.com"
+                           " password test port 6543\n")))
+           (auth-sources (list netrc 'keepassxc))
+           (auth-source-do-cache nil)
+           (keepassxc-auth-source-group "emacs/import"))
+      (unwind-protect
+          (cl-letf (((symbol-function 'y-or-n-p) (lambda (_) t)))
+            (keepassxc-auth-source-import)
+            (let ((group-req (car (keepassxc-mock-requests-for
+                                   mock "inner:create-new-group"))))
+              (should group-req)
+              (should (equal (gethash "groupName" group-req) "emacs/import")))
+            (let ((inners (keepassxc-mock-requests-for mock "inner:set-login")))
+              (should (= (length inners) 2))
+              (let ((carol (seq-find (lambda (r)
+                                       (equal (gethash "login" r) "carol"))
+                                     inners))
+                    (daniel (seq-find (lambda (r)
+                                        (equal (gethash "login" r)
+                                               "daniel@atomx.com"))
+                                      inners)))
+                (should carol)
+                (should (equal (gethash "url" carol) "imaps://new.example.com"))
+                (should (equal (gethash "password" carol) "s3cret"))
+                (should (equal (gethash "group" carol) "emacs/import"))
+                (should (equal (gethash "groupUuid" carol) "mock-group-uuid"))
+                (should daniel)
+                (should (equal (gethash "url" daniel)
+                               "auth-source://api.atomx.local:6543"))
+                (should (equal (gethash "password" daniel) "test")))))
+        (delete-file netrc)))))
 
 
 ;;; keepassxc-cli and application control
