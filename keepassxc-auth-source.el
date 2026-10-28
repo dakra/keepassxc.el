@@ -43,6 +43,8 @@
 ;; With :create t a missing entry is created in KeePassXC when the
 ;; caller invokes the returned :save-function.
 ;; Set `keepassxc-auth-source-group' to save such entries into a specific group.
+;; KeePassXC >= 2.8 rejects users and secrets containing KeePassXC
+;; placeholders such as {USERNAME}, {S:attr} or {REF:...}.
 
 ;;; Code:
 

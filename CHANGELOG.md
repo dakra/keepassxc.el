@@ -6,6 +6,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Added
+- Socket discovery on macOS also checks the per-user temporary
+  directory reported by the OS (`getconf DARWIN_USER_TEMP_DIR`), where
+  KeePassXC ≥ 2.8 places the socket regardless of `TMPDIR`.
+- New error conditions: `keepassxc-reply-too-large` (errorCode 7;
+  KeePassXC ≥ 2.8 refuses replies above 640KiB, so very large
+  databases cannot be listed), `keepassxc-no-entries` (errorCode 16)
+  and `keepassxc-references-not-allowed` (errorCode 34; KeePassXC
+  ≥ 2.8 rejects logins and passwords containing KeePassXC placeholders
+  such as `{USERNAME}`, `{S:attr}` or `{REF:...}` in
+  `keepassxc-set-login`).
 - New command `keepassxc-auth-source-import`: import the entries of
   all other auth-sources (mainly `~/.authinfo.gpg`) into KeePassXC.
   Entries whose URL already has a login with the same username are
@@ -33,8 +43,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   from all database entries with incremental completion matching
   title and URL, like `keepassxc-copy-url`.  This requires "Allow
   limited access to all entries" to be enabled in the KeePassXC
-  browser settings and KeePassXC ≥ 2.8 (`get-database-entries` is not
-  in any released version yet); on older KeePassXC the commands fall
+  browser settings and KeePassXC ≥ 2.8; on older KeePassXC the commands fall
   back to the previous URL-first flow automatically.  The four
   commands take no arguments anymore; use `keepassxc-get-logins` for
   programmatic by-URL lookup.

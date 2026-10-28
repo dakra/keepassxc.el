@@ -183,15 +183,26 @@ the parsed message as a hash-table.")
               'keepassxc-error)
 (define-error 'keepassxc-incorrect-action "Action not supported by KeePassXC"
               'keepassxc-error)
+(define-error 'keepassxc-reply-too-large
+              "KeePassXC reply exceeds the browser protocol message limit"
+              'keepassxc-error)
+(define-error 'keepassxc-no-entries "No entries in the KeePassXC database"
+              'keepassxc-error)
+(define-error 'keepassxc-references-not-allowed
+              "KeePassXC rejects logins and passwords containing placeholders"
+              'keepassxc-error)
 
 (defconst keepassxc--error-conditions
   '((1 . keepassxc-database-locked)     ; ERROR_KEEPASS_DATABASE_NOT_OPENED
     (6 . keepassxc-denied)              ; ERROR_KEEPASS_ACTION_CANCELLED_OR_DENIED
+    (7 . keepassxc-reply-too-large)     ; ERROR_KEEPASS_CANNOT_ENCRYPT_MESSAGE
     (8 . keepassxc-not-associated)      ; ERROR_KEEPASS_ASSOCIATION_FAILED
     (10 . keepassxc-not-associated)     ; ERROR_KEEPASS_ENCRYPTION_KEY_UNRECOGNIZED
     (12 . keepassxc-incorrect-action)   ; ERROR_KEEPASS_INCORRECT_ACTION
     (15 . keepassxc-no-logins)          ; ERROR_KEEPASS_NO_LOGINS_FOUND
-    (19 . keepassxc-denied))            ; ERROR_KEEPASS_ACCESS_TO_ALL_ENTRIES_DENIED
+    (16 . keepassxc-no-entries)         ; ERROR_KEEPASS_NO_GROUPS_FOUND
+    (19 . keepassxc-denied)             ; ERROR_KEEPASS_ACCESS_TO_ALL_ENTRIES_DENIED
+    (34 . keepassxc-references-not-allowed)) ; ERROR_KEEPASS_CANNOT_USE_REFERENCES
   "Alist mapping KeePassXC errorCode values to error symbols.")
 
 (defun keepassxc--error-from-message (msg)
@@ -242,7 +253,8 @@ Ordered by preference; matches the lookup logic of KeePassXC's
 `BrowserShared::localServerPath'."
   (let ((runtime-dir (getenv "XDG_RUNTIME_DIR"))
         (snap-dir (getenv "SNAP_USER_COMMON")))
-    (delq nil
+    (delete-dups
+     (delq nil
           (list
            ;; KeePassXC >= 2.7.5 on Linux (also flatpak).
            (when runtime-dir
@@ -255,9 +267,14 @@ Ordered by preference; matches the lookup logic of KeePassXC's
            ;; Snap package.
            (when snap-dir
              (expand-file-name keepassxc--socket-name snap-dir))
-           ;; macOS and other systems use TMPDIR.
+           ;; KeePassXC >= 2.8 on macOS ignores TMPDIR
+           (when (eq system-type 'darwin)
+             (expand-file-name keepassxc--socket-name
+                               (string-trim (shell-command-to-string
+                                             "getconf DARWIN_USER_TEMP_DIR"))))
+           ;; Other systems use TMPDIR.
            (expand-file-name keepassxc--socket-name
-                             (temporary-file-directory))))))
+                             (temporary-file-directory)))))))
 
 (defun keepassxc--socket-path ()
   "Return the path of the KeePassXC socket or signal an error."
@@ -272,9 +289,8 @@ Ordered by preference; matches the lookup logic of KeePassXC's
 
 (defconst keepassxc--max-message-size (* 16 1024 1024)
   "Sanity limit for the size of one server message.
-Large databases can produce multi-megabyte replies (the 1MiB
-NATIVEMSG_MAX_LENGTH limit only applies to the browser
-native-messaging proxy, not to the direct socket).")
+KeePassXC >= 2.8 refuses replies above 640KiB of plaintext with
+errorCode 7 (`keepassxc-reply-too-large').")
 
 (defun keepassxc--connect (session)
   "Connect SESSION to KeePassXC and exchange public keys."
@@ -722,7 +738,10 @@ INTERACTIVE non-nil, message the number of matches."
 (defun keepassxc-set-login (url login password &optional uuid group group-uuid)
   "Create or update the KeePassXC entry for URL with LOGIN and PASSWORD.
 With UUID, update that existing entry instead of creating a new
-one.  GROUP and GROUP-UUID select the group for new entries."
+one.  GROUP and GROUP-UUID select the group for new entries.
+KeePassXC >= 2.8 rejects a LOGIN or PASSWORD containing a
+KeePassXC placeholder such as {USERNAME}, {S:attr} or {REF:...}
+with `keepassxc-references-not-allowed'.  Other braces are allowed."
   (let ((session (keepassxc--default-session)))
     (keepassxc--ensure-association session)
     (keepassxc--request
@@ -792,15 +811,17 @@ SEARCH is matched against entry URLs (usually a domain name)."
                         keepassxc-user-interaction-timeout)))
 
 (defun keepassxc-get-database-entries ()
-  "Return all entries of the open KeePassXC database.
+  "Return all entries of the open KeePassXC database, nil when empty.
 Requires \"Allow limited access to all entries\" (get database
 entries requests) to be enabled in the KeePassXC browser
 settings."
   (let ((session (keepassxc--default-session)))
     (keepassxc--ensure-association session)
-    (append (gethash "entries"
-                     (keepassxc--request session "get-database-entries"))
-            nil)))
+    (condition-case nil
+        (append (gethash "entries"
+                         (keepassxc--request session "get-database-entries"))
+                nil)
+      (keepassxc-no-entries nil))))
 
 ;;;###autoload
 (defun keepassxc-generate-password (&optional copy)

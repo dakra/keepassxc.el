@@ -46,9 +46,8 @@ All traffic is encrypted with libsodium `crypto_box`
 - KeePassXC ≥ 2.6 with **Browser Integration enabled**
   (Settings → Browser Integration → Enable browser integration; no
   browser needs to be configured, only the setting enabled).
-  The incremental all-entries picker needs KeePassXC ≥ 2.8
-  ([snapshot builds](https://snapshot.keepassxc.org/)); older versions
-  fall back to a URL prompt.
+  The incremental all-entries picker needs KeePassXC ≥ 2.8; older
+  versions fall back to a URL prompt.
 - [sodium.el](https://github.com/dakra/sodium.el) and libsodium
 
 ## Installation
@@ -132,10 +131,13 @@ association dialog on first use.
 All entry commands select from the full database with incremental
 completion over title and URL, which requires "Allow limited access
 to all entries" to be enabled in the KeePassXC browser settings and
-KeePassXC ≥ 2.8 (the `get-database-entries` request; not yet in a
-released version; use a [snapshot build](https://snapshot.keepassxc.org/)).
+KeePassXC ≥ 2.8 (the `get-database-entries` request).
 On older KeePassXC the commands automatically fall back to prompting
 for a URL and completing among its entries.
+KeePassXC ≥ 2.8 can restrict a group to one browser integration key
+(group settings → Browser Integration).  This only affects URL
+lookups (`keepassxc-get-logins` and the auth-source backend); the
+all-entries picker lists such groups regardless of the key.
 The browser protocol only provides passwords by URL, so entries
 without a URL signal an error for password/username retrieval;
 copying their TOTP and deleting them still works.

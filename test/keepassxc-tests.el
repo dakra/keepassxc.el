@@ -84,7 +84,8 @@ plstore persistence is replaced with an in-memory alist."
   "Socket discovery covers XDG, legacy, snap and TMPDIR locations."
   (with-environment-variables (("XDG_RUNTIME_DIR" "/run/user/1000")
                                ("SNAP_USER_COMMON" "/snap/common"))
-    (let ((candidates (keepassxc--socket-candidates)))
+    (let* ((temporary-file-directory "/tmp/emacs-test/")
+           (candidates (keepassxc--socket-candidates)))
       (should (equal (car candidates)
                      (concat "/run/user/1000/app/org.keepassxc.KeePassXC/"
                              "org.keepassxc.KeePassXC.BrowserServer")))
@@ -92,7 +93,10 @@ plstore persistence is replaced with an in-memory alist."
                       candidates))
       (should (member "/snap/common/org.keepassxc.KeePassXC.BrowserServer"
                       candidates))
-      (should (= (length candidates) 4)))))
+      (should (equal (car (last candidates))
+                     "/tmp/emacs-test/org.keepassxc.KeePassXC.BrowserServer"))
+      (should (= (length candidates)
+                 (if (eq system-type 'darwin) 5 4))))))
 
 (ert-deftest keepassxc-tests-error-mapping ()
   "KeePassXC errorCodes map to the right error symbols."
@@ -100,10 +104,13 @@ plstore persistence is replaced with an in-memory alist."
     (puthash "error" "some error" msg)
     (dolist (case '(("1" . keepassxc-database-locked)
                     ("6" . keepassxc-denied)
+                    ("7" . keepassxc-reply-too-large)
                     ("8" . keepassxc-not-associated)
                     ("10" . keepassxc-not-associated)
                     ("12" . keepassxc-incorrect-action)
                     ("15" . keepassxc-no-logins)
+                    ("16" . keepassxc-no-entries)
+                    ("34" . keepassxc-references-not-allowed)
                     ("42" . keepassxc-error)))
       (puthash "errorCode" (car case) msg)
       (should (eq (car (keepassxc--error-from-message msg)) (cdr case))))))
@@ -418,6 +425,15 @@ advised, as transient does with its suffix commands (this breaks
       (should (= (length entries) 5))
       (should (equal (gethash "title" entry) "Mail"))
       (should (equal (gethash "url" entry) "imaps://mail.example.com")))))
+
+(ert-deftest keepassxc-tests-get-database-entries-empty ()
+  "An empty database (errorCode 16) yields nil instead of an error."
+  (keepassxc-tests--with-mock nil
+    (keepassxc-get-database-entries)
+    (setf (keepassxc-mock-fail-with mock) 16)
+    ;; Skip the association check so the failure hits the entries request.
+    (cl-letf (((symbol-function 'keepassxc--ensure-association) #'ignore))
+      (should (null (keepassxc-get-database-entries))))))
 
 (ert-deftest keepassxc-tests-copy-url ()
   "copy-url copies the selected URL; candidates are searchable by URL."
